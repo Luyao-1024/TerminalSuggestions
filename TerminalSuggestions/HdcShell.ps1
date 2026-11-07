@@ -158,17 +158,25 @@ function Get-HdcShellMarkerKind {
     return [char]'-'
 }
 
+function Get-HdcShellMarkerSuffix {
+    param([char]$Marker, [string]$MarkerMode)
+    # 'all' is an explicit -F, 'dir' is an explicit -p (directory marker only).
+    if ($MarkerMode -eq 'all') { return [string]$Marker }
+    if ($MarkerMode -eq 'dir' -and $Marker -eq '/') { return '/' }
+    return ''
+}
+
 function Write-HdcShellOutput {
-    param([object[]]$Lines, [string]$Mode = 'none', [bool]$KeepMarker = $false)
+    param([object[]]$Lines, [string]$Mode = 'none', [string]$MarkerMode = 'none')
     if ($Mode -eq 'none') { Write-HdcShellText $Lines; return }
     if (-not $Lines -or $Lines.Count -eq 0) { return }
     if ($Mode -eq 'long') { Write-HdcShellLongOutput $Lines; return }
-    if ($Mode -eq 'single') { Write-HdcShellSingleOutput $Lines $KeepMarker; return }
-    Write-HdcShellColumnOutput $Lines $KeepMarker
+    if ($Mode -eq 'single') { Write-HdcShellSingleOutput $Lines $MarkerMode; return }
+    Write-HdcShellColumnOutput $Lines $MarkerMode
 }
 
 function Write-HdcShellColumnOutput {
-    param([object[]]$Lines, [bool]$KeepMarker)
+    param([object[]]$Lines, [string]$MarkerMode)
     $width = try { [Console]::WindowWidth } catch { 80 }
     if ($width -le 0) { $width = 80 }
     $names = [System.Collections.Generic.List[string]]::new()
@@ -215,7 +223,7 @@ function Write-HdcShellColumnOutput {
         if ($text -match '^(.+?)([/@*|=])$') {
             $name = $Matches[1]
             $marker = $Matches[2][0]
-            $suffix = if ($KeepMarker) { [string]$marker } else { '' }
+            $suffix = Get-HdcShellMarkerSuffix $marker $MarkerMode
             $names.Add($name + $suffix)
             $colors.Add((Get-HdcShellFileColor $name (Get-HdcShellMarkerKind $marker)))
         } else {
@@ -227,7 +235,7 @@ function Write-HdcShellColumnOutput {
 }
 
 function Write-HdcShellSingleOutput {
-    param([object[]]$Lines, [bool]$KeepMarker)
+    param([object[]]$Lines, [string]$MarkerMode)
     $builder = [System.Text.StringBuilder]::new()
     $pending = 0
     foreach ($line in $Lines) {
@@ -239,7 +247,7 @@ function Write-HdcShellSingleOutput {
         } elseif ($text -match '^(.+?)([/@*|=])$') {
             $name = $Matches[1]
             $marker = $Matches[2][0]
-            $suffix = if ($KeepMarker) { [string]$marker } else { '' }
+            $suffix = Get-HdcShellMarkerSuffix $marker $MarkerMode
             $color = Get-HdcShellFileColor $name (Get-HdcShellMarkerKind $marker)
             $rendered = if ($color) { "$color$name$suffix$($PSStyle.Reset)" } else { $name + $suffix }
             [void]$builder.AppendLine($rendered)
@@ -298,6 +306,79 @@ function Write-HdcShellLongOutput {
         }
     }
     if ($builder.Length -gt 0) { [Console]::Write($builder.ToString()) }
+}
+
+function New-HdcShellRemoteScript {
+    param(
+        [Parameter(Mandatory)][string]$Command,
+        [Parameter(Mandatory)][string]$Marker,
+        [string]$Cwd = '/',
+        [string]$OldCwd = '',
+        [int]$LastExitCode = 0
+    )
+    # hdc keeps the RPC channel open as the remote shell's stdin, so closing
+    # the host side never reaches the device as EOF. Without this redirect a
+    # command that reads stdin (cat, sort, head, read, ...) blocks the whole
+    # session forever. The interactive keys are never forwarded to commands,
+    # so EOF is the only stdin the enhanced session can honestly provide.
+    $finish = "echo '" + $Marker + "'" + '$?' + '; pwd'
+    $onInterrupt = "echo '" + $Marker + "130'; pwd; exit 130"
+    'exec </dev/null' + "`n" +
+        'read -r __ts_pid __ts_name __ts_state __ts_ppid __ts_pgid __ts_rest < /proc/$$/stat' + "`n" +
+        "printf '" + $Marker + 'PID:%s:%s\n'' "$$" "$__ts_pgid"' + "`n" +
+        "trap '" + $onInterrupt.Replace("'", "'\''") + "' INT" + "`n" +
+        "cd '" + $Cwd.Replace("'", "'\''") + "' || exit" + "`n" +
+        "OLDPWD='" + $OldCwd.Replace("'", "'\''") + "'" + "`n" +
+        '(exit ' + $LastExitCode + ')' + "`n" + $Command + "`n" +
+        $finish
+}
+
+function Get-HdcShellLsPlan {
+    param([Parameter(Mandatory)][string]$Line)
+    $trimmed = $Line.Trim()
+    if ($trimmed -notmatch '^ls(\s+.*)?$') { return $null }
+    if ($trimmed -cmatch '[|&;<>`]') { return $null }
+    if ($trimmed -match '\$\(|[\[\]\*\?]') { return $null }
+    # Device command names are case sensitive: LS is not ls.
+    if (-not ($trimmed -cmatch '^ls(\s+.*)?$')) { return $null }
+    $lsArgs = $Matches[1]
+    $flags = ''
+    $skip = $false
+    foreach ($token in ($lsArgs -split '\s+')) {
+        if (-not $token) { continue }
+        if ($token -match '^-([A-Za-z0-9]+)$') { $flags += $Matches[1]; continue }
+        if ($token.StartsWith('-')) { $skip = $true; break }
+    }
+    # Flag checks are case sensitive: -S sorts by size and is locally reflowed,
+    # while -s prints block counts and stays raw.
+    if ($skip -or $flags -cmatch '[misQ]') { return $null }
+    $markerMode = 'none'
+    if ($flags -cmatch '[lngo]') {
+        $mode = 'long'
+    } elseif ($flags -cmatch '1') {
+        $mode = 'single'
+    } elseif ($flags -cmatch 'h') {
+        # Device ls -h prints its own total line; keep that layout raw.
+        return $null
+    } else {
+        $mode = 'columns'
+    }
+    $execLine = $Line
+    if ($mode -ne 'long') {
+        if ($flags -cmatch 'F') {
+            # Already requested by the user: keep every type marker.
+            $markerMode = 'all'
+        } else {
+            $execLine = 'ls -F' + $lsArgs
+            # -p asks only for the directory marker; other markers must not
+            # leak from the internal -F.
+            if ($flags -cmatch 'p') { $markerMode = 'dir' }
+        }
+        # The local renderers expect one entry per line; -C/-x would make the
+        # device group them before we reflow.
+        $execLine += ' -1'
+    }
+    [pscustomobject]@{ Mode = $mode; MarkerMode = $markerMode; ExecLine = $execLine }
 }
 
 function Enter-HdcShell {
@@ -419,7 +500,7 @@ function Enter-HdcShell {
             if ($null -eq $line) { [Console]::WriteLine(); continue }
             $trimmed = $line.Trim()
             if (-not $trimmed) { continue }
-            if ($trimmed -match '^(exit|logout)(?:\s+[0-9]+)?\s*$') { break }
+            if ($trimmed -cmatch '^(exit|logout)(?:\s+[0-9]+)?\s*$') { break }
 
             # ls is post-processed locally: -F type markers for simple listings,
             # permission/name parsing for long format. Layouts this does not
@@ -427,51 +508,18 @@ function Enter-HdcShell {
             # shell syntax) are left untouched.
             $execLine = $line
             $lsMode = 'none'
-            $keepMarker = $false
-            if ($trimmed -match '^ls(\s+.*)?$' -and $trimmed -notmatch '[|&;<>`]' -and
-                $trimmed -notmatch '\$\(|[\[\]\*\?]') {
-                $lsArgs = $Matches[1]
-                $flags = ''
-                $skip = $false
-                foreach ($token in ($lsArgs -split '\s+')) {
-                    if (-not $token) { continue }
-                    if ($token -match '^-([A-Za-z0-9]+)$') { $flags += $Matches[1]; continue }
-                    if ($token.StartsWith('-')) { $skip = $true; break }
-                }
-                if (-not $skip -and $flags -notmatch '[misQ]') {
-                    if ($flags -match '[lngo]') {
-                        $lsMode = 'long'
-                    } elseif ($flags -match '1') {
-                        $lsMode = 'single'
-                    } else {
-                        $lsMode = 'columns'
-                    }
-                    if ($lsMode -ne 'long') {
-                        if ($flags -match 'F') {
-                            # Already requested by the user: keep the type markers visible.
-                            $keepMarker = $true
-                        } else {
-                            $execLine = 'ls -F' + $lsArgs
-                            if ($flags -match 'p') { $keepMarker = $true }
-                        }
-                        # The local renderers expect one entry per line; -C/-x
-                        # would make the device group them before we reflow.
-                        $execLine += ' -1'
-                    }
-                }
+            $markerMode = 'none'
+            $plan = Get-HdcShellLsPlan $line
+            if ($plan) {
+                $execLine = $plan.ExecLine
+                $lsMode = $plan.Mode
+                $markerMode = $plan.MarkerMode
             }
 
             # Newlines keep trailing comments from swallowing the status marker.
             # Restore OLDPWD and $? alongside cwd before executing a new command.
-            $finish = "echo '" + $script:HdcShellMarker + "'" + '$?' + '; pwd'
-            $onInterrupt = "echo '" + $script:HdcShellMarker + "130'; pwd; exit 130"
-            $remote = 'read -r __ts_pid __ts_name __ts_state __ts_ppid __ts_pgid __ts_rest < /proc/$$/stat' + "`n" +
-                "printf '" + $script:HdcShellMarker + 'PID:%s:%s\n'' "$$" "$__ts_pgid"' + "`n" +
-                "trap '" + $onInterrupt.Replace("'", "'\''") + "' INT" + "`n" +
-                "cd '" + $cwd.Replace("'", "'\''") + "' || exit" + "`n" +
-                "OLDPWD='" + $script:HdcShellOldCwd.Replace("'", "'\''") + "'" + "`n" +
-                '(exit ' + $script:HdcShellLastExitCode + ')' + "`n" + $execLine + "`n" +
-                $finish
+            $remote = New-HdcShellRemoteScript -Command $execLine -Marker $script:HdcShellMarker `
+                -Cwd $cwd -OldCwd $script:HdcShellOldCwd -LastExitCode $script:HdcShellLastExitCode
             # Unknown commands stream by default. Only simple ls forms whose
             # output is locally reformatted retain the existing buffered view.
             $result = [TerminalSuggestions.HdcShellProcess]::Run($exe.Source, $Serial, $remote,
@@ -479,7 +527,7 @@ function Enter-HdcShell {
             if ($lsMode -ne 'none' -and $result.Output) {
                 $text = $result.Output
                 if ($text.EndsWith("`n")) { $text = $text.Substring(0, $text.Length - 1) }
-                Write-HdcShellOutput @($text.Split("`n") | ForEach-Object { $_.TrimEnd("`r") }) $lsMode $keepMarker
+                Write-HdcShellOutput @($text.Split("`n") | ForEach-Object { $_.TrimEnd("`r") }) $lsMode $markerMode
             }
             if ($result.Interrupted) { [Console]::WriteLine('^C') }
             $global:LASTEXITCODE = $result.ExitCode

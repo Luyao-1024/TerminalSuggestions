@@ -59,7 +59,7 @@ Enter-HdcShell -Serial <serial>    # 直接调用入口
 3DK0224A12000841 hmdfs ->
 ```
 
-直接执行 `hilog`、`dmesg` 等设备命令即可。Ctrl+C 中断当前命令并留在设备会话；`exit` 或空行 Ctrl+D 退出。
+直接执行 `hilog`、`dmesg` 等设备命令即可。Ctrl+C 中断当前命令并留在设备会话；`exit` 或空行 Ctrl+D 退出。设备会话不转发交互输入，只输入 `cat` 等读取 stdin 的命令会立即结束，不会挂起。
 
 需要运行 `vi`、`top` 等交互程序时，使用原始透传模式：
 
@@ -77,3 +77,4 @@ hdc shell --raw
 | `TerminalSuggestions/` | PowerShell 模块与 C# 适配器 |
 | `tests/` | 基础、按键对照、终端属性和真机检查 |
 | [docs/hdc-shell-alignment.md](docs/hdc-shell-alignment.md) | 对齐差异、历史变更和验证记录 |
+| [docs/command-performance.md](docs/command-performance.md) | 各类命令与原生 hdc 的耗时对照及测量方法 |

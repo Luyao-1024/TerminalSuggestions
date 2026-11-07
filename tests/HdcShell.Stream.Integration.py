@@ -48,6 +48,20 @@ try:
     prompt()
     check(row('EARLYLATE'), 'Partial writes retain their exact text and line ending')
 
+    # hdc never forwards host stdin EOF, so a command that reads stdin would
+    # otherwise block the session forever. The remote script must hand such
+    # commands /dev/null and let them terminate with their natural status.
+    start = time.monotonic()
+    session.send('cat\r', .1)
+    prompt()
+    check(time.monotonic() - start < 3, 'A command that reads stdin saw EOF instead of hanging')
+    session.send("printf 'STDIN_STATUS=%s\\n' $?\r")
+    prompt()
+    check(row('STDIN_STATUS=0'), 'A stdin-reading command keeps its natural exit status')
+    session.send("printf 'PIPE=%s\\n' \"$(echo hi | cat)\"\r")
+    prompt()
+    check(row('PIPE=hi'), 'The /dev/null default never replaces stdin supplied by the command itself')
+
     pid_file = parity.FIX / '.stream_pid'
     session.send("printf '%s' $$ > '" + str(pid_file) + "'; while :; do printf 'TIC%s\\n' K; sleep 1; done\r", .2)
     wait_screen(lambda: row('TICK'), 'A continuous command did not stream')

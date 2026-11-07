@@ -154,6 +154,35 @@ public static class HdcMenuCoordinateProbe {
         Assert-Equal (Get-PSReadLineOption).$property $saved.Colors[$key] "Restore $property"
     }
 
+    # hdc keeps the RPC channel open as the remote shell's stdin; the remote
+    # script must point stdin at /dev/null so reads terminate instead of
+    # blocking the whole session.
+    $remote = New-HdcShellRemoteScript -Command 'cat' -Marker '@@M@@' -Cwd '/data' -OldCwd '/root' -LastExitCode 7
+    Assert-True ($remote.StartsWith("exec </dev/null`n")) 'Device commands receive EOF on stdin instead of blocking'
+    Assert-True ($remote.Contains("`ncat`n")) 'User command text stays unmodified'
+    Assert-True ($remote.Contains("OLDPWD='/root'")) 'OLDPWD is still restored before the command'
+    Assert-True ($remote.EndsWith("echo '@@M@@'`$?; pwd")) 'Status marker still follows the command'
+
+    # ls flag handling is case sensitive and keeps unsupported layouts raw.
+    $plan = Get-HdcShellLsPlan 'ls -S /data'
+    Assert-Equal $plan.Mode 'columns' 'Uppercase -S is a sort flag, not lowercase -s'
+    Assert-Equal $plan.ExecLine 'ls -F -S /data -1' 'Sort listings are still locally reflowed'
+    Assert-Equal (Get-HdcShellLsPlan 'ls -s /data') $null 'Lowercase -s keeps the device block layout'
+    Assert-Equal (Get-HdcShellLsPlan 'ls -m /data') $null 'Comma output stays on the device'
+    Assert-Equal (Get-HdcShellLsPlan 'ls -h /data') $null 'Device total line is not reflowed as a filename'
+    Assert-Equal (Get-HdcShellLsPlan 'ls -lh /data').Mode 'long' 'Long human-readable output stays long'
+    Assert-Equal (Get-HdcShellLsPlan 'ls -1 /data').Mode 'single' 'Single-column output'
+    Assert-Equal (Get-HdcShellLsPlan 'ls -p /data').MarkerMode 'dir' 'Explicit -p keeps only directory markers'
+    Assert-Equal (Get-HdcShellLsPlan 'ls -F /data').MarkerMode 'all' 'Explicit -F keeps all type markers'
+    Assert-Equal (Get-HdcShellLsPlan 'LS /data') $null 'Only lowercase ls is locally reformatted'
+    Assert-Equal (Get-HdcShellLsPlan 'Ls /data') $null 'Device commands are case sensitive'
+    Assert-Equal (Get-HdcShellLsPlan 'ls /data | cat') $null 'Pipelines bypass local ls rendering'
+    Assert-Equal (Get-HdcShellLsPlan 'ls /data/*.txt') $null 'Globs bypass local ls rendering'
+    Assert-Equal (Get-HdcShellMarkerSuffix '/' 'dir') '/' '-p shows the directory marker'
+    Assert-Equal (Get-HdcShellMarkerSuffix '*' 'dir') '' '-p hides executable markers'
+    Assert-Equal (Get-HdcShellMarkerSuffix '*' 'all') '*' '-F shows executable markers'
+    Assert-Equal (Get-HdcShellMarkerSuffix '/' 'none') '' 'Unrequested markers stay hidden'
+
     # Exercise the actual remote path builder with mocked device output.
     Set-Item Function:Get-HdcRemotePath -Value $originalRemotePath
     function Invoke-HdcCapture {

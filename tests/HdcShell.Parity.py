@@ -15,12 +15,29 @@ for name in ['local','log','lost+found','space dir','space two','space dir/child
 BIN=BASE/'bin';BIN.mkdir()
 shim=BIN/'hdc'
 shim.write_text('''#!/usr/bin/python3
-import os,sys,subprocess
+import os,sys,subprocess,signal
+try:
+    import ctypes
+    ctypes.CDLL(None).prctl(1, signal.SIGTERM)  # PR_SET_PDEATHSIG: no orphan on test teardown
+except Exception:
+    pass
 args=sys.argv[1:]
 q=' '.join(args[args.index('shell')+1:])
 if q.startswith('IFS=:'): print('/bin/cat\\n/bin/echo\\n/bin/ls');sys.exit(0)
-r=subprocess.run(['/bin/sh','-c',q],cwd=os.environ['PARITY_FIXTURE'],start_new_session=True)
-sys.exit(r.returncode)
+# hdc keeps the remote stdin channel open for the whole command, so closing the
+# local client stdin never gives the remote command EOF. Model that here.
+read_fd,write_fd=os.pipe()
+p=subprocess.Popen(['/bin/sh','-c',q],cwd=os.environ['PARITY_FIXTURE'],stdin=read_fd,start_new_session=True)
+os.close(read_fd)
+def stop(signum,frame):
+    try: os.killpg(p.pid,signal.SIGKILL)
+    except ProcessLookupError: pass
+    os.close(write_fd)
+    sys.exit(128+signum)
+signal.signal(signal.SIGTERM,stop);signal.signal(signal.SIGHUP,stop)
+rc=p.wait()
+os.close(write_fd)
+sys.exit(rc)
 ''');shim.chmod(0o755)
 CS='''using System;using System.IO;using System.Reflection;using System.Text;using System.Threading;
 public static class ParityProbe {static Timer timer;static string last;

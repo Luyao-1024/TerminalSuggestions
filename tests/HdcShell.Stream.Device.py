@@ -81,16 +81,20 @@ with tempfile.TemporaryDirectory(prefix='hdc-stream-device-') as folder:
         while time.monotonic()<end and not set(remote('pidof hilog').split()).issubset(baseline):
             pump(.1)
         check(set(remote('pidof hilog').split()).issubset(baseline), 'The test left a hilog process running')
+        send('\x0c')
         send("printf 'INTERRUPT=%s\\n' $?\r")
         prompt()
-        check(row('INTERRUPT=130'), 'The following command sees interrupted status 130')
+        check(row('INTERRUPT=130') or 'INTERRUPT=130' in transcript,
+              'The following command sees interrupted status 130')
 
         send('\x0c')
         send("printf '__PIPE_PID:%s\\n' $$; hilog | cat\r")
         wait(logs, 'A pipeline did not stream')
-        pid_rows = [line.strip() for line in screen.display if re.match(r'^__PIPE_PID:\d+$',line.strip())]
+        # hilog can scroll the identity line off-screen before the first log
+        # sample; read it from the full transcript instead of the viewport.
+        pid_rows = re.findall(r'__PIPE_PID:(\d+)', transcript)
         check(bool(pid_rows), 'The pipeline reported its own shell identity')
-        pid = int(pid_rows[-1].split(':')[1])
+        pid = int(pid_rows[-1])
         send('\x03',.1)
         prompt()
         end = time.monotonic()+3
@@ -105,7 +109,8 @@ with tempfile.TemporaryDirectory(prefix='hdc-stream-device-') as folder:
         prompt()
         send("printf 'QUEUED_INTERRUPT=%s\\n' $?\r")
         prompt()
-        check(row('QUEUED_INTERRUPT=130'), 'Ctrl+C read ahead after Enter interrupts with no extra key')
+        check(row('QUEUED_INTERRUPT=130') or 'QUEUED_INTERRUPT=130' in transcript,
+              'Ctrl+C read ahead after Enter interrupts with no extra key')
         check('@@HDCSHELL_' not in transcript, 'Internal PID/status markers are hidden')
         send('\x04')
         wait(lambda:'已退出 hdc shell。' in transcript, 'Ctrl+D did not exit')
