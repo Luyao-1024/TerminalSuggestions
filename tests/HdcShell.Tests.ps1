@@ -1,0 +1,195 @@
+# Standalone regression checks: pwsh -NoProfile -File tests/HdcShell.Tests.ps1
+$ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot '../TerminalSuggestions/TerminalSuggestions.psd1') -Force
+& (Get-Module TerminalSuggestions) {
+    $script:Checks = 0
+    function Assert-Equal($Actual, $Expected, [string]$Because) {
+        if (($Actual | ConvertTo-Json -Depth 6 -Compress) -cne ($Expected | ConvertTo-Json -Depth 6 -Compress)) {
+            throw "$Because : expected [$Expected], got [$Actual]"
+        }
+        $script:Checks++
+    }
+    function Assert-True($Actual, [string]$Because) {
+        if (-not $Actual) { throw $Because }
+        $script:Checks++
+    }
+    function Complete([string]$Line, [int]$Cursor = $Line.Length) {
+        Get-HdcShellCompletion $Line $Cursor
+    }
+    $originalRemotePath = (Get-Command Get-HdcRemotePath).ScriptBlock
+    function Get-HdcRemotePath {
+        param($Word, $Serial, $Cwd, [switch]$DirectoriesOnly, [switch]$ExecutablesOnly, $HomePath)
+        $script:LastLookup = @{ Word = $Word; Cwd = $Cwd; Directories = [bool]$DirectoriesOnly; Executables = [bool]$ExecutablesOnly }
+        $files = @('/data/local/', '/data/log/', '/data/lost+found/', '/data/a b/', "/data/a'b/", '/data/file.txt', './ls', './notes.txt')
+        if ($DirectoriesOnly) { $files = @($files | Where-Object { $_.EndsWith('/') }) }
+        if ($ExecutablesOnly) { $files = @('./ls') }
+        $files
+    }
+    $script:HdcShellBins = @('ls', 'lsof', 'cat', 'echo', 'CaseTool', 'casetool')
+    $script:HdcShellBuiltins = @('cd', 'exit', 'echo')
+    $script:HdcShellSerial = 'test-device'
+    $script:HdcShellCwd = '/remote'
+    $script:HdcShellHome = '/root'
+
+    Assert-Equal @((Complete 'l').CompletionMatches.ListItemText) @('ls', 'lsof') 'Complete only device commands'
+    Assert-Equal @((Complete 'git').CompletionMatches).Count 0 'Host Git is not a remote candidate'
+    Assert-Equal @((Complete 'case').CompletionMatches).Count 2 'Case-distinct device commands survive deduplication'
+    foreach ($line in @('echo x | l', 'echo x || l', 'echo x && l', 'echo x; l', 'if l', 'A=1 l', 'echo "a|b"; l')) {
+        Assert-Equal @((Complete $line).CompletionMatches.ListItemText) @('ls', 'lsof') "Command position: $line"
+    }
+    Assert-Equal @((Complete 'echo hi # l').CompletionMatches).Count 0 'Comments have no completion'
+    $c = Complete 'cd /data/lo'
+    Assert-Equal @($c.CompletionMatches.ListItemText) @('/data/local/', '/data/log/', '/data/lost+found/') 'cd lists directories'
+    Assert-True $script:LastLookup.Directories 'cd asks the device for directories'
+    Assert-Equal $script:LastLookup.Cwd '/remote' 'Relative lookup uses tracked remote cwd'
+    Assert-True (-not @((Complete 'cat /data/').CompletionMatches.ListItemText).Contains('git')) 'Path completion never consults the host'
+    Assert-Equal (Complete 'cd "/data/a b').CompletionMatches[0].CompletionText '"/data/a b/' 'A quoted directory retains the open quote like zsh'
+    Assert-Equal (Complete 'cd /data/a\ b').CompletionMatches[0].CompletionText '/data/a\ b/' 'Escaped spaces retain sh backslash quoting'
+    Assert-Equal (Complete 'cd /data/a').CompletionMatches[1].CompletionText "/data/a\'b/" 'Single quotes are escaped for sh'
+    $context = Get-HdcShellCompletionContext 'cd ~/a' 6
+    Assert-Equal (ConvertTo-HdcShellCompletionText '~/a b/' $context) '~/a\ b/' 'Home expansion and zsh quoting are retained'
+    Assert-Equal (Complete 'cat /data/fi').CompletionMatches[0].CompletionText '/data/file.txt ' 'A file completion supplies exactly one separator'
+    Assert-Equal (Get-HdcShellWordPoint 'echo alpha beta' 0 -Forward) 5 'zsh forward-word includes its separator'
+    Assert-Equal (Get-HdcShellWordPoint 'echo /data/local/tmp' 8 -Forward) 11 'zsh word acceptance includes the next slash'
+    Assert-Equal (Get-HdcShellWordPoint 'echo alpha beta' 15) 11 'zsh backward-word stops at word start'
+    $line = 'cd /data/locl && echo keep'
+    $c = Complete $line 12
+    Assert-Equal $c.ReplacementIndex 3 'Mid-word completion starts at the word boundary'
+    Assert-Equal $c.ReplacementLength 10 'Mid-word completion replaces only the same word'
+    Assert-Equal ($line.Remove($c.ReplacementIndex, $c.ReplacementLength).Insert($c.ReplacementIndex, $c.CompletionMatches[0].CompletionText)) 'cd /data/local/ && echo keep' 'Completion preserves later commands'
+    Assert-Equal @((Complete 'cd /data/loX' 11).CompletionMatches).Count 0 'An unmatched suffix prevents completion like zsh'
+    [void](Complete 'echo hi > /data/l')
+    Assert-True (-not $script:LastLookup.Directories) 'Redirection targets can be regular files'
+    [void](Complete './l')
+    Assert-True $script:LastLookup.Executables 'A command path requests executable files'
+    $options = @((Complete 'ls -').CompletionMatches.ListItemText)
+    foreach ($flag in @('-a', '-A', '-r', '-R')) { Assert-True ($options -ccontains $flag) "Preserve case-sensitive option $flag" }
+    Assert-Equal @((Complete 'bm d').CompletionMatches.ListItemText) @('disable', 'dump') 'OpenHarmony subcommands'
+    Assert-True (@((Complete 'bm dump -').CompletionMatches.ListItemText) -contains '-n') 'OpenHarmony subcommand options'
+
+    # A full command grid can be hundreds of rows tall. Only rendering is
+    # windowed: global candidate indices and column-major ordering survive.
+    $view = Get-HdcShellMenuViewport -Count 13 -Columns 3 -Rows 5 -AvailableRows 3
+    Assert-Equal @($view.Indices) @(0, 1, 2, 5, 6, 7, 10, 11, 12) 'Viewport preserves full-grid columns'
+    $view = Get-HdcShellMenuViewport -Count 13 -Columns 3 -Rows 5 -AvailableRows 3 -FirstRow 2 -Selected 12
+    Assert-Equal @($view.Indices) @(2, 3, 4, 7, 8, 9, 12) 'Partial last columns keep correct cell positions'
+    Assert-Equal $view.SelectedIndex 6 'Highlight maps global index to the displayed cell'
+    $view = Get-HdcShellMenuViewport -Count 500 -Columns 6 -Rows 84 -AvailableRows 12 -Selected 499
+    Assert-True ($view.Indices -contains 499) 'Reverse selection reaches the last candidate beyond the viewport'
+    Assert-Equal $view.Rows 12 'Menu height is bounded by available terminal rows'
+    $view = Get-HdcShellMenuViewport -Count 500 -Columns 6 -Rows 84 -AvailableRows 0
+    Assert-Equal $view.Rows 0 'An input occupying the terminal leaves no drawable menu rows'
+    Assert-Equal $view.Indices.Count 0 'A zero-height menu does not draw or discard candidates'
+    $first = 0
+    foreach ($selected in 0..499) {
+        $view = Get-HdcShellMenuViewport -Count 500 -Columns 6 -Rows 84 -AvailableRows 7 -FirstRow $first -Selected $selected
+        if ($view.Indices -notcontains $selected -or $view.FirstRow -lt 0 -or $view.FirstRow + $view.Rows -gt 84) {
+            throw "Viewport lost candidate $selected or exceeded terminal bounds"
+        }
+        $first = $view.FirstRow
+    }
+    Assert-True $true 'All 500 candidates stay reachable while the viewport scrolls'
+
+    Assert-Equal @(Get-HdcShellPathHighlight 'cd /data/local') @(3, 11) 'An existing device path is emphasized before Enter'
+    Assert-Equal @(Get-HdcShellPathHighlight 'cd /data/missing') @() 'A missing device path is not emphasized'
+    Assert-Equal @(Get-HdcShellPathHighlight 'cd /data/Local') @() 'Path existence is case sensitive'
+    Assert-Equal @(Get-HdcShellPathHighlight 'cat /data/file.txt /data/local') @(4, 14, 19, 11) 'Each existing path argument gets its own span'
+    Assert-Equal @(Get-HdcShellPathHighlight 'cd "/data/a b"') @() 'Quoted path styles override underline like zsh'
+    Assert-Equal @(Get-HdcShellPathHighlight 'cd /data/"a b"') @(3, 6) 'Mixed quotes retain emphasis on the unquoted path segment'
+    Assert-Equal @(Get-HdcShellPathHighlight 'cd /data/loc') @(3, 9) 'A valid path prefix at the end of input is emphasized like zsh'
+    Assert-Equal @(Get-HdcShellPathHighlight 'cd /data/loc ') @() 'A trailing space ends path-prefix emphasis'
+    Assert-Equal @(Get-HdcShellPathHighlight 'cd /data/a\ b') @(3, 10) 'Escaped spaces are decoded for device lookup'
+    Assert-Equal @(Get-HdcShellPathHighlight 'echo hi # /data/local') @() 'Comments do not trigger path highlighting'
+    Assert-Equal @(Get-HdcShellPathHighlight 'cat </data/file.txt') @(5, 14) 'Redirection targets use remote path emphasis'
+    Assert-Equal (Resolve-HdcShellHighlightPath '"$HOME/a b"') '/root/a b' 'Quoted HOME expands from the device'
+    Assert-Equal (Resolve-HdcShellHighlightPath '~/a') '/root/a' 'Tilde expands from the device home'
+    Assert-Equal (Resolve-HdcShellHighlightPath "'~/a'") '~/a' 'A quoted tilde stays literal'
+    Assert-Equal (Resolve-HdcShellHighlightPath '\$HOME') '$HOME' 'An escaped dollar stays literal'
+    Assert-Equal (Resolve-HdcShellHighlightPath '$(touch /tmp/must-not-execute)') $null 'Highlighting never evaluates command substitution'
+    Assert-Equal (Resolve-HdcShellHighlightPath '$UNKNOWN/path') $null 'Unknown variables are not expanded on the host'
+
+    # Check real editor state restoration, including pre-existing custom keys.
+    Set-PSReadLineOption -EditMode Windows
+    Set-PSReadLineKeyHandler -Chord 'Ctrl+f' -BriefDescription TestCustom -ScriptBlock { 'original binding' }
+    $saved = Save-HdcShellEditor
+    Enable-HdcShellEditor
+    Assert-True (-not [object]::ReferenceEquals($saved.Console, $saved.ConsoleField.GetValue($saved.Instance))) 'The device editor adds its path renderer'
+    $styled = [TerminalSuggestions.HdcShellPathConsole]::Emphasize("`e[32mcd `e[0m/data`e[39m next", 'cd /data next', 0, 0, @(3, 5))
+    Assert-True ($styled.Contains("`e[96m`e[4m/data`e[39m`e[24m next")) 'Path color and underline end before the next argument'
+    $styled = [TerminalSuggestions.HdcShellPathConsole]::Emphasize("`e[33m'a`e[0m b'`e[90m prediction", "'a b'", 0, 0, @(0, 5))
+    Assert-True ($styled.Contains("`e[0m`e[96m`e[4m b'")) 'A native color reset inside a path does not lose its color or underline'
+    Assert-True ($styled.EndsWith("`e[90m`e[24m prediction")) 'Gray prediction text never inherits path emphasis'
+    $styled = [TerminalSuggestions.HdcShellPathConsole]::Emphasize("`e[38;2;0;128;255m/data next", '/data next', 0, 0, @(0, 5))
+    Assert-True ($styled.Contains("`e[96m`e[4m/data`e[38;2;0;128;255m`e[24m next")) 'The following text recovers its original RGB color including zero components'
+    Add-Type -TypeDefinition @'
+public static class HdcMenuCoordinateProbe {
+    public static void ResizeDuringFrame() {
+        throw new System.ArgumentOutOfRangeException("top", "terminal resized during rendering");
+    }
+}
+'@
+    $errorCount = $Error.Count
+    $drawn = [TerminalSuggestions.HdcShellMenuRenderer]::TryInvoke(
+        [HdcMenuCoordinateProbe].GetMethod('ResizeDuringFrame'), $null, @())
+    Assert-Equal $drawn $false 'A resize invalidates the frame instead of throwing from the key handler'
+    Assert-Equal $Error.Count $errorCount 'A recoverable frame resize does not add a PowerShell error'
+    $options = Get-PSReadLineOption
+    Assert-Equal @($options.PromptText) @('') 'PowerShell parse errors cannot overwrite the device status arrow'
+    Assert-Equal $options.EditMode.ToString() 'Emacs' 'Device editing uses OMZ-style Emacs keys'
+    Assert-Equal $options.HistorySaveStyle.ToString() 'SaveNothing' 'Device history cannot merge with host history'
+    Assert-Equal $options.PredictionSource.ToString() 'History' 'Device predictions exclude host plugins'
+    Assert-True $options.HistorySearchCaseSensitive 'History suggestions are case sensitive'
+    Assert-Equal (Get-PSReadLineKeyHandler -Chord 'Ctrl+f').Function 'HdcForwardChar' 'Ctrl+F moves within an edited line'
+    Assert-Equal (Get-PSReadLineKeyHandler -Chord 'Ctrl+c').Function 'HdcCancelMenu' 'Ctrl+C cancels without exiting'
+    Assert-Equal (Get-PSReadLineKeyHandler -Chord 'Ctrl+r').Function 'ReverseSearchHistory' 'Ctrl+R searches device history'
+    Assert-Equal $options.InlinePredictionColor "`e[90m" 'Suggestions use zsh fg=8'
+    Assert-Equal ($options.AddToHistoryHandler.Invoke(' echo secret')) 'SkipAdding' 'Leading spaces opt out of history'
+    Restore-HdcShellEditor $saved
+    Assert-Equal @((Get-PSReadLineOption).PromptText) @($saved.Options.PromptText) 'The host prompt error marker is restored'
+    Assert-True ([object]::ReferenceEquals($saved.Console, $saved.ConsoleField.GetValue($saved.Instance))) 'The original host renderer is restored'
+    Assert-Equal (Get-PSReadLineOption).EditMode.ToString() 'Windows' 'Host editing mode is restored'
+    Assert-Equal (Get-PSReadLineKeyHandler -Chord 'Ctrl+f').Function 'TestCustom' 'Custom host key is restored'
+    foreach ($key in $saved.Colors.Keys) {
+        $property = if ($key -eq 'Default') { 'DefaultTokenColor' } else { $key + 'Color' }
+        Assert-Equal (Get-PSReadLineOption).$property $saved.Colors[$key] "Restore $property"
+    }
+
+    # Exercise the actual remote path builder with mocked device output.
+    Set-Item Function:Get-HdcRemotePath -Value $originalRemotePath
+    function Invoke-HdcCapture {
+        param($Application, $Arguments, $TimeoutSeconds)
+        $script:LastRemote = $Arguments[-1]
+        [pscustomobject]@{ ExitCode = 0; Lines = @('./', '../', '.hidden/', 'folder/', 'Folder/', 'error.log', 'failed.txt', 'a b', "a'b") }
+    }
+    function Find-HdcApplication { [pscustomobject]@{ Source = '/fake/hdc' } }
+    $script:HdcCache = @{}
+    $files = @(Get-HdcRemotePath -Word '/data/' -Serial test -Cwd /)
+    Assert-True ($files -contains '/data/error.log') 'A valid filename containing error is retained'
+    Assert-True ($files -contains '/data/failed.txt') 'A valid filename containing failed is retained'
+    Assert-True ($files -contains '/data/a b') 'Whitespace in remote filenames is retained'
+    Assert-True ($files -notcontains '/data/.hidden/') 'Dotfiles stay hidden without a dot prefix'
+    $files = @(Get-HdcRemotePath -Word '/data/.' -Serial test -Cwd / -DirectoriesOnly)
+    Assert-True ($files -contains '/data/./') 'Dot-directory completion'
+    Assert-True ($files -contains '/data/../') 'Parent-directory completion'
+    Assert-True ($files -contains '/data/.hidden/') 'A dot prefix enables hidden directories'
+    Assert-True ($files -notcontains '/data/a b') 'cd filters out regular files'
+    Assert-True (($files -ccontains '/data/folder/') -and ($files -ccontains '/data/Folder/')) 'Case-distinct paths survive'
+    [void](Get-HdcRemotePath -Word 'dir/a' -Serial test -Cwd "/data/a'b")
+    Assert-True ($script:LastRemote.Contains("cd '/data/a'\''b' 2>/dev/null &&")) 'Remote cwd uses sh quoting and failure-safe lookup'
+    [void](Get-HdcRemotePath -Word '~/a' -Serial test -Cwd / -HomePath /root)
+    Assert-True ($script:LastRemote.Contains("'/root'")) 'Home paths resolve on the device'
+    [void](Get-HdcRemotePath -Word './a' -Serial test -Cwd / -ExecutablesOnly)
+    Assert-True ($script:LastRemote.Contains('-type f -executable')) 'Command-path completion filters executable files'
+
+    # Exercise all entry forms without starting an interactive shell.
+    function Find-HdcApplication { [pscustomobject]@{ Source = '/fake/hdc' } }
+    function Enter-HdcShell { param($Serial, [switch]$Raw); $script:Entered = "$Serial|$Raw" }
+    $script:HdcDevice = 'current'
+    hdc shell
+    Assert-Equal $script:Entered 'current|False' 'Default device enters enhanced shell'
+    hdc -t explicit shell
+    Assert-Equal $script:Entered 'explicit|False' 'Explicit device also enters enhanced shell'
+    hdc -t explicit shell --raw
+    Assert-Equal $script:Entered 'explicit|True' 'Explicit raw mode stays available'
+    "PASS: $script:Checks checks"
+}
