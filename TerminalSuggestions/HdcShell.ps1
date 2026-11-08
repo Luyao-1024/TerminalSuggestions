@@ -489,6 +489,18 @@ function Write-HdcShellBase64Bytes {
     [Console]::Write($builder.ToString())
 }
 
+function Add-HdcShellHilogColor {
+    param([AllowEmptyString()][string]$Line)
+    # hilog's default output is uncolored when stdout is a pipe (the enhanced
+    # session always is). Enable its own color format unless the user already
+    # chose a format, asked for help, or uses redirection/compound syntax.
+    if ($Line -cnotmatch '^hilog(?=\s|$)') { return $Line }
+    if ($Line -match '[<>;&`]' -or $Line -match '\$\(') { return $Line }
+    if ($Line -match '(^|\s)(-v|--format)') { return $Line }
+    if ($Line -match '(^|\s)(-h|--help)(\s|$)') { return $Line }
+    'hilog -v color' + $Line.Substring(5)
+}
+
 function Enter-HdcShell {
     [CmdletBinding()]
     param(
@@ -647,6 +659,10 @@ function Enter-HdcShell {
                 $lsMode = $plan.Mode
                 $markerMode = $plan.MarkerMode
             }
+            # Device hilog does not colorize when stdout is a pipe; enable its
+            # color format by default without rewriting the user's history or
+            # the visible command line.
+            $execLine = Add-HdcShellHilogColor $execLine
 
             # Unknown commands stream by default. Only simple ls forms whose
             # output is locally reformatted retain the existing buffered view.

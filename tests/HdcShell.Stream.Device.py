@@ -73,6 +73,13 @@ with tempfile.TemporaryDirectory(prefix='hdc-stream-device-') as folder:
         send('hilog\r')
         wait(logs, 'hilog produced no live output before process exit')
         check(current() != serial + ' / ->', 'hilog is still running while output is already visible')
+        log_rows = [index for index, line in enumerate(screen.display)
+                    if re.match(r'^\d\d-\d\d \d\d:\d\d:\d\d', line.strip())]
+        check(bool(log_rows), 'hilog output is visible')
+        log_row = log_rows[-1]
+        check(any(screen.buffer[log_row][column].fg != 'default'
+                  for column in range(min(len(screen.display[log_row].strip()), 40))),
+              'hilog is colorized by default (auto -v color)')
         start = time.monotonic()
         send('\x03',.1)
         prompt()

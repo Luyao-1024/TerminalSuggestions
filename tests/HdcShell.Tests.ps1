@@ -223,6 +223,17 @@ public static class HdcMenuCoordinateProbe {
     Assert-Equal (Get-HdcShellMarkerSuffix '*' 'all') '*' '-F shows executable markers'
     Assert-Equal (Get-HdcShellMarkerSuffix '/' 'none') '' 'Unrequested markers stay hidden'
 
+    # hilog is colorized by default; explicit formats/help/redirection win.
+    Assert-Equal (Add-HdcShellHilogColor 'hilog') 'hilog -v color' 'Bare hilog gets -v color'
+    Assert-Equal (Add-HdcShellHilogColor 'hilog -T x') 'hilog -v color -T x' 'hilog filters keep working with color'
+    Assert-Equal (Add-HdcShellHilogColor 'hilog -x') 'hilog -v color -x' 'hilog dump is colorized'
+    Assert-Equal (Add-HdcShellHilogColor 'hilog -v json') 'hilog -v json' 'An explicit -v is not overridden'
+    Assert-Equal (Add-HdcShellHilogColor 'hilog --format json') 'hilog --format json' 'An explicit --format is not overridden'
+    Assert-Equal (Add-HdcShellHilogColor 'hilog -h') 'hilog -h' 'Help is not modified'
+    Assert-Equal (Add-HdcShellHilogColor 'hilog > /tmp/x') 'hilog > /tmp/x' 'Redirection is not colorized'
+    Assert-Equal (Add-HdcShellHilogColor 'hilog | head') 'hilog -v color | head' 'A viewing pipeline gets color'
+    Assert-Equal (Add-HdcShellHilogColor 'HILOG') 'HILOG' 'Command matching is case sensitive'
+
     # Filesystem-mutating commands refresh the directory view; read-only
     # commands keep the 10-second listing cache.
     foreach ($line in @('touch f', 'mkdir d', 'rm f', 'mv a b', 'ln -s a b',
