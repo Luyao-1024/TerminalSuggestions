@@ -388,6 +388,18 @@ function Get-HdcShellLsPlan {
     [pscustomobject]@{ Mode = $mode; MarkerMode = $markerMode; ExecLine = $execLine }
 }
 
+function Test-HdcShellSimpleCat {
+    param([AllowEmptyString()][string]$Line)
+    # A simple cat can be transported as device-side base64, which is the only
+    # way binary bytes survive the hdc shell channel. Pipelines/redirections
+    # stay entirely on the device and must not be rewritten.
+    $text = $Line.Trim()
+    if ($text -cnotmatch '^cat(?:\s|$)') { return $false }
+    if ($text -match '[|&;<>`]') { return $false }
+    if ($text -match '\$\(' -or $text -match '[\r\n]') { return $false }
+    return $true
+}
+
 function Enter-HdcShell {
     [CmdletBinding()]
     param(
@@ -546,12 +558,13 @@ function Enter-HdcShell {
             # otherwise the per-command RPC path preserves state and limits.
             [Console]::Write($PSStyle.Reset)
             $result = $null
+            $binaryTransport = Test-HdcShellSimpleCat $execLine
             if ($script:HdcShellSession -and $script:HdcShellSession.Alive -and
                 $script:HdcShellSession.CanRun($execLine, $cwd, $script:HdcShellOldCwd,
-                    $script:HdcShellLastExitCode)) {
+                    $script:HdcShellLastExitCode, $binaryTransport)) {
                 $result = $script:HdcShellSession.Run($execLine, $cwd, $script:HdcShellOldCwd,
                     $script:HdcShellLastExitCode, $script:HdcShellMarker, ($lsMode -ne 'none'),
-                    [Microsoft.PowerShell.PSConsoleReadLine])
+                    $binaryTransport, [Microsoft.PowerShell.PSConsoleReadLine])
                 if ($result.Faulted) {
                     # The command may already have run; do not replay it via a
                     # second RPC. Rebuild the session for the next prompt.

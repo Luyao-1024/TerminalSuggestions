@@ -195,6 +195,17 @@ public static class HdcMenuCoordinateProbe {
     Assert-Equal (Get-HdcShellMarkerSuffix '*' 'all') '*' '-F shows executable markers'
     Assert-Equal (Get-HdcShellMarkerSuffix '/' 'none') '' 'Unrequested markers stay hidden'
 
+    # Simple cat is transported as device-side base64; pipelines and
+    # redirections must stay untouched on the device.
+    Assert-True (Test-HdcShellSimpleCat 'cat /system/bin/init') 'Plain cat uses binary-safe transport'
+    Assert-True (Test-HdcShellSimpleCat 'cat -n "/a b"') 'Quoted paths and options are allowed'
+    Assert-True (Test-HdcShellSimpleCat 'cat') 'Bare cat is allowed'
+    Assert-True (-not (Test-HdcShellSimpleCat 'cat /x | wc -c')) 'Pipelines are not rewritten'
+    Assert-True (-not (Test-HdcShellSimpleCat 'cat /x > /tmp/y')) 'Redirections are not rewritten'
+    Assert-True (-not (Test-HdcShellSimpleCat 'cat /x && echo done')) 'Compound commands are not rewritten'
+    Assert-True (-not (Test-HdcShellSimpleCat 'cat $(echo /x)')) 'Command substitution is not rewritten'
+    Assert-True (-not (Test-HdcShellSimpleCat 'CAT /x')) 'Command names stay case sensitive'
+
     # Exercise the actual remote path builder with mocked device output.
     Set-Item Function:Get-HdcRemotePath -Value $originalRemotePath
     function Invoke-HdcCapture {

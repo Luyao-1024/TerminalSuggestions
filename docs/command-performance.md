@@ -2,7 +2,7 @@
 
 本文记录 Enhanced `hdc shell` 各类命令的实测耗时，并与原生 hdc 路径对照。当前规格见 [AGENTS.md](../AGENTS.md)，功能差异与验证结论见 [hdc-shell-alignment.md](hdc-shell-alignment.md)。
 
-测量日期：2026-11-08（1.2.0）。数据来自单台设备、单次会话的中位数；不是硬件上限，也不代表 Windows 实机结果。
+测量日期：2026-11-08（1.3.0）。数据来自单台设备、单次会话的中位数；不是硬件上限，也不代表 Windows 实机结果。
 
 ## 测量环境
 
@@ -44,65 +44,65 @@
 
 | 类别 | 命令 | direct | raw | enhanced 执行 | enhanced 输入渲染 |
 |---|---|---:|---:|---:|---:|
-| 平凡 | `echo hello` | 114 | 29 | 50 | 464 |
+| 平凡 | `echo hello` | 114 | 29 | 50 | 440 |
 | 平凡 | `pwd` | 114 | 29 | 49 | 162 |
-| 平凡 | `true` | 114 | 29 | 49 | 120 |
-| 平凡 | `printf 'TXT\n'` | 165 | 110 | 102 | 142 |
-| 文件 | `cat <fixture>/plain.txt` | 115 | 30 | 57 | 73 |
-| 文件 | `head -1 <fixture>/plain.txt` | 115 | 100 | 105 | 66 |
-| 文件 | `tail -1 <fixture>/plain.txt` | 115 | 108 | 104 | 68 |
-| 文件 | `grep hello <fixture>/plain.txt` | 114 | 108 | 104 | 101 |
-| 文件 | `sed -n 1p <fixture>/plain.txt` | 164 | 125 | 99 | 101 |
-| 文件 | `wc -l <fixture>/plain.txt` | 165 | 126 | 100 | 64 |
-| 文件 | `sort <fixture>/plain.txt` | 165 | 124 | 99 | 73 |
-| stdin | `cat` | — | — | 49 | 33 |
-| stdin | `wc` | — | — | 102 | 32 |
-| stdin | `head` | — | — | 102 | 33 |
-| stdin | `grep x` | — | — | 145 | 38 |
-| stdin | `read line` | — | — | 50 | 41 |
-| 列表 | `ls <fixture>` | 114 | 107 | 120 | 64 |
-| 列表 | `ls -1 <fixture>` | 164 | 124 | 119 | 65 |
-| 列表 | `ls -l <fixture>` | 165 | 102 | 103 | 65 |
-| 列表 | `ls -R <fixture>` | 115 | 84 | 101 | 71 |
-| 列表 | `ls -a <fixture>` | 165 | 102 | 102 | 69 |
-| 列表 | `ls -S <fixture>` | 165 | 109 | 105 | 67 |
-| 列表 | `ls -m <fixture>` | 165 | 125 | 102 | 69 |
-| 列表 | `ls /system/bin \| wc -l` | 215 | 105 | 100 | 64 |
-| 搜索 | `find <fixture> -maxdepth 1 -name '*.txt'` | 165 | 107 | 104 | 75 |
-| OpenHarmony | `bm dump -a \| head -3` | 215 | 156 | 149 | 64 |
-| OpenHarmony | `param get const.product.model` | 115 | 101 | 99 | 64 |
-| OpenHarmony | `aa dump -l \| head -3` | 290 | 233 | 219 | 64 |
-| OpenHarmony | `hidumper -e \| head -3` | 340 | 304 | 314 | 39 |
-| OpenHarmony | `hilog -x \| head -3` | 114 | 91 | 101 | 39 |
-| OpenHarmony | `dmesg \| head -3` | 164 | 84 | 105 | 37 |
-| 复合 | `echo hi \| cat` | 114 | 28 | 52 | 63 |
-| 复合 | `true && echo AND` | 114 | 28 | 49 | 65 |
-| 复合 | `false \|\| echo OR` | 114 | 29 | 51 | 63 |
-| 复合 | `echo A; echo B` | 114 | 29 | 49 | 64 |
-| 复合 | `echo SUB=$(echo inner)` | 114 | 34 | 51 | 66 |
-| 复合 | `echo x > /dev/null && echo REDIR` | 115 | 30 | 52 | 70 |
-| 状态 | `false` | 114 | 29 | 57 | 34 |
-| 状态 | `export FOO=state; echo $FOO` | 114 | 29 | 51 | 64 |
-| 大输出 | `seq 1 3000 \| tail -1` | 164 | 78 | 102 | 64 |
-| 大输出 | `seq 1 1000` | 115 | 134 | 102 | 65 |
-| Unicode | `printf '中文✓\n'` | 165 | 81 | 104 | 64 |
-| Unicode | `printf '\033[31mRED\033[0m\n'` | 165 | 110 | 98 | 65 |
+| 平凡 | `true` | 115 | 29 | 49 | 116 |
+| 平凡 | `printf 'TXT\n'` | 165 | 103 | 100 | 108 |
+| 文件 | `cat <fixture>/plain.txt` | 114 | 29 | 102 | 72 |
+| 文件 | `head -1 <fixture>/plain.txt` | 164 | 102 | 101 | 66 |
+| 文件 | `tail -1 <fixture>/plain.txt` | 115 | 102 | 102 | 65 |
+| 文件 | `grep hello <fixture>/plain.txt` | 165 | 85 | 104 | 99 |
+| 文件 | `sed -n 1p <fixture>/plain.txt` | 165 | 108 | 105 | 100 |
+| 文件 | `wc -l <fixture>/plain.txt` | 165 | 124 | 100 | 65 |
+| 文件 | `sort <fixture>/plain.txt` | 164 | 125 | 106 | 73 |
+| stdin | `cat` | — | — | 99 | 32 |
+| stdin | `wc` | — | — | 103 | 32 |
+| stdin | `head` | — | — | 104 | 32 |
+| stdin | `grep x` | — | — | 122 | 39 |
+| stdin | `read line` | — | — | 51 | 40 |
+| 列表 | `ls <fixture>` | 114 | 100 | 102 | 68 |
+| 列表 | `ls -1 <fixture>` | 165 | 126 | 107 | 66 |
+| 列表 | `ls -l <fixture>` | 165 | 127 | 103 | 65 |
+| 列表 | `ls -R <fixture>` | 165 | 103 | 105 | 65 |
+| 列表 | `ls -a <fixture>` | 114 | 103 | 106 | 64 |
+| 列表 | `ls -S <fixture>` | 115 | 124 | 102 | 64 |
+| 列表 | `ls -m <fixture>` | 165 | 125 | 102 | 64 |
+| 列表 | `ls /system/bin | wc -l` | 215 | 104 | 103 | 63 |
+| 搜索 | `find <fixture> -maxdepth 1 -name '*.txt'` | 214 | 108 | 130 | 75 |
+| OpenHarmony | `bm dump -a | head -3` | 215 | 153 | 154 | 64 |
+| OpenHarmony | `param get const.product.model` | 165 | 105 | 89 | 64 |
+| OpenHarmony | `aa dump -l | head -3` | 315 | 227 | 241 | 64 |
+| OpenHarmony | `hidumper -e | head -3` | 390 | 304 | 324 | 40 |
+| OpenHarmony | `hilog -x | head -3` | 165 | 84 | 104 | 39 |
+| OpenHarmony | `dmesg | head -3` | 165 | 80 | 103 | 37 |
+| 复合 | `echo hi | cat` | 164 | 27 | 53 | 63 |
+| 复合 | `true && echo AND` | 114 | 29 | 50 | 64 |
+| 复合 | `false || echo OR` | 114 | 29 | 49 | 64 |
+| 复合 | `echo A; echo B` | 115 | 29 | 30 | 64 |
+| 复合 | `echo SUB=$(echo inner)` | 115 | 32 | 51 | 65 |
+| 复合 | `echo x > /dev/null && echo REDIR` | 115 | 28 | 52 | 70 |
+| 状态 | `false` | 114 | 28 | 51 | 33 |
+| 状态 | `export FOO=state; echo $FOO` | 115 | 28 | 53 | 64 |
+| 大输出 | `seq 1 3000 | tail -1` | 165 | 82 | 101 | 64 |
+| 大输出 | `seq 1 1000` | 165 | 131 | 106 | 63 |
+| Unicode | `printf '中文✓\n'` | 165 | 125 | 101 | 65 |
+| Unicode | `printf '\033[31mRED\033[0m\n'` | 165 | 126 | 106 | 64 |
 
 ### 分类中位数
 
 | 类别 | direct | raw | enhanced 执行 | enhanced 输入渲染 |
 |---|---:|---:|---:|---:|
-| 平凡 | 114 | 29 | 50 | 152 |
-| 文件 | 115 | 108 | 100 | 73 |
-| stdin | — | — | 102 | 33 |
-| 列表 | 165 | 106 | 102 | 66 |
-| 搜索 | 165 | 107 | 104 | 75 |
-| OpenHarmony | 190 | 128 | 127 | 52 |
-| 复合 | 114 | 29 | 51 | 64 |
-| 状态 | 114 | 29 | 54 | 49 |
-| 大输出 | 140 | 106 | 102 | 64 |
-| Unicode | 165 | 96 | 101 | 64 |
-| **全部命令中位数** | **115** | **102** | **101** | **65** |
+| 平凡 | 114 | 29 | 50 | 139 |
+| 文件 | 164 | 102 | 102 | 72 |
+| stdin | — | — | 103 | 32 |
+| 列表 | 165 | 114 | 103 | 64 |
+| 搜索 | 214 | 108 | 130 | 75 |
+| OpenHarmony | 190 | 129 | 129 | 52 |
+| 复合 | 115 | 29 | 50 | 64 |
+| 状态 | 114 | 28 | 52 | 48 |
+| 大输出 | 165 | 106 | 104 | 64 |
+| Unicode | 165 | 126 | 104 | 64 |
+| **全部命令中位数** | **165** | **102** | **102** | **64** |
 
 ### 路径强调的冷/热差异
 
@@ -119,6 +119,7 @@
 
 - **整体**：1.2.0 增强会话执行中位数约 **101 ms**（1.1.8 约 204 ms），与原生交互会话（约 102 ms）和非交互 `hdc shell`（约 115 ms）基本持平。
 - **持久通道的收益**：每条命令不再新建 hdc 进程和连接（原先约 85 ms），也不再重复解析长包装脚本；会话启动时只定义一次包装函数，每条命令发送一条短调用。简单内建命令从约 200 ms 降到约 **50 ms**。
+- **简单 `cat` 的二进制转码**：1.3.0 起，首词为 `cat` 且不含管道、重定向、命令替换的命令会在设备端执行 `cat … | base64`，主机流式解码后按原字节输出；`cat file` 约 102 ms、stdin `cat` 约 99 ms，比 1.2.0 增加约 45 ms（base64 外部进程），但仍远低于逐命令 RPC 的约 200 ms。含管道/重定向的 `cat` 不转码，仍在设备内执行。
 - **剩余成本**：`head`、`grep`、`printf`、`seq`、`ls` 等是设备上的外部程序，进程启动本身约 50 ms；因此这些命令仍在约 100 ms。`aa dump`、`hidumper` 等设备侧耗时占主导（约 220–315 ms）。
 - **stdout 非 TTY**：持久通道的用户命令 stdout/stderr 经管道中继到会话，仍是非 TTY，避免 `ls` 排版、`dmesg` 跟随模式等因 TTY 检测而变化；`cat`、`read` 等仍得到 EOF。
 - **路径强调**：热缓存输入渲染中位数约 65 ms；冷查询仍约 350–490 ms。该部分与命令执行无关，受用户输入节奏影响。
@@ -128,13 +129,13 @@
 
 ## 复现
 
-```sh
+``sh
 python3 tests/HdcShell.Bench.py <serial>
-```
+``
 
 需要 `pwsh`、`hdc`、`pexpect`、`pyte`、`wcwidth`，并连接一台在线设备。测试会在 `/data/local/tmp` 创建一个临时夹具并在退出时删除；不会修改其他设备文件。增强会话默认从仓库加载模块，也可用 `HDC_TEST_MODULE` 指向安装后的模块：
 
-```sh
+``sh
 HDC_TEST_MODULE=~/.local/share/powershell/Modules/TerminalSuggestions/TerminalSuggestions.psd1 \
   python3 tests/HdcShell.Bench.py <serial>
-```
+``

@@ -116,7 +116,7 @@ namespace TerminalSuggestions
             WriteMaster(FunctionLine());
             DrainUntilPrompt(startup, 250, 3500);
             // Probe the full function path before advertising the session.
-            WriteMaster(Invocation(":", "/", "", 0));
+            WriteMaster(Invocation(":", "/", "", 0, false));
             var ready = Stopwatch.StartNew();
             int seen = 0;
             while (ready.ElapsedMilliseconds < 5000 && seen < 2 && Alive)
@@ -151,25 +151,26 @@ namespace TerminalSuggestions
         // input line short, which is what dominates device-side latency.
         private static string FunctionLine()
         {
-            return "__ts_run() { ( exec </dev/null 2>&1; read -r __p __c __s __pp __pg __r < /proc/self/stat; " +
+            return "__ts_run() { ( exec </dev/null; read -r __p __c __s __pp __pg __r < /proc/self/stat; " +
                 "print -n \"$__TS_RM\"\"PID:$__p:$__pg\\n\"; " +
                 "trap 'print -n \"$__TS_RM\"\"130\\n$PWD\\n\"; exit 130' INT; " +
                 "cd \"$2\" || exit; OLDPWD=\"$3\"; " +
-                "if [ \"$4\" = 0 ]; then :; else (exit \"$4\"); fi; " +
-                "eval \"$1\"; __ts=$?; " +
+                "if [ \"$5\" = 1 ]; then eval \"$1\" 2>&1 | base64; __ts=${PIPESTATUS[0]:-0}; " +
+                "else if [ \"$4\" = 0 ]; then :; else (exit \"$4\"); fi; eval \"$1\" 2>&1; __ts=$?; fi; " +
                 "print -n \"$__TS_RM$__ts\\n$PWD\\n\" ) | ( trap '' INT; exec cat ); }\n";
         }
 
-        private static string Invocation(string command, string cwd, string oldCwd, int lastExitCode)
+        private static string Invocation(string command, string cwd, string oldCwd, int lastExitCode,
+            bool base64)
         {
             return "__ts_run '" + command.Replace("'", "'\\''") + "' '" +
                 cwd.Replace("'", "'\\''") + "' '" + oldCwd.Replace("'", "'\\''") + "' " +
-                lastExitCode + "\n";
+                lastExitCode + (base64 ? " 1" : " 0") + "\n";
         }
 
-        public bool CanRun(string command, string cwd, string oldCwd, int lastExitCode)
+        public bool CanRun(string command, string cwd, string oldCwd, int lastExitCode, bool base64)
         {
-            return Alive && Invocation(command, cwd, oldCwd, lastExitCode).Length <= MaxScriptLength;
+            return Alive && Invocation(command, cwd, oldCwd, lastExitCode, base64).Length <= MaxScriptLength;
         }
 
         private void ReadLoop(StreamReader reader, bool error)
@@ -260,11 +261,11 @@ namespace TerminalSuggestions
         }
 
         public HdcShellProcessResult Run(string command, string cwd, string oldCwd, int lastExitCode,
-            string marker, bool capture, Type editorType)
+            string marker, bool capture, bool base64, Type editorType)
         {
             var result = new HdcShellProcessResult { Faulted = true };
             if (!Alive) return result;
-            string line = Invocation(command, cwd, oldCwd, lastExitCode);
+            string line = Invocation(command, cwd, oldCwd, lastExitCode, base64);
             if (line.Length > MaxScriptLength) return result;
 
             var captured = capture ? new StringBuilder() : null;
@@ -294,36 +295,103 @@ namespace TerminalSuggestions
             int signalStage = 0;
             var stop = new Stopwatch();
             string preamble = "";
+            var b64 = new StringBuilder();
+            string markerTail = "";
+            Stream rawOut = null;
+
+            void WriteDecoded(byte[] bytes)
+            {
+                if (suppress) return;
+                if (capture) { captured.Append(Encoding.UTF8.GetString(bytes)); return; }
+                if (rawOut == null) rawOut = Console.OpenStandardOutput();
+                rawOut.Write(bytes, 0, bytes.Length);
+                rawOut.Flush();
+            }
+
+            void DecodeBase64(string text)
+            {
+                foreach (char c in text)
+                {
+                    if (char.IsWhiteSpace(c)) continue;
+                    b64.Append(c);
+                    if (b64.Length < 4) continue;
+                    string group = b64.ToString(0, 4);
+                    b64.Remove(0, 4);
+                    try { WriteDecoded(Convert.FromBase64String(group)); } catch { }
+                }
+            }
+
+            void FlushBase64()
+            {
+                if (b64.Length < 2) { b64.Clear(); return; }
+                string group = b64.ToString();
+                b64.Clear();
+                group = group.PadRight((group.Length + 3) / 4 * 4, '=');
+                try { WriteDecoded(Convert.FromBase64String(group)); } catch { }
+            }
+
+            bool ProcessBase64(string text)
+            {
+                string data = markerTail + text;
+                markerTail = "";
+                int at = data.IndexOf('@');
+                if (at < 0) { DecodeBase64(data); return false; }
+                DecodeBase64(data.Substring(0, at));
+                string rest = data.Substring(at);
+                if (rest.StartsWith(marker, StringComparison.Ordinal))
+                {
+                    FlushBase64();
+                    stream.Push(rest);
+                    return stream.Complete;
+                }
+                if (marker.StartsWith(rest, StringComparison.Ordinal))
+                {
+                    markerTail = rest;
+                    return false;
+                }
+                // Base64 never contains '@'; an unexpected one is dropped.
+                return ProcessBase64(rest.Substring(1));
+            }
+
             try
             {
                 WriteMaster(line);
                 bool Process(Chunk chunk)
                 {
                     if (chunk.Error) { write(chunk.Text); return false; }
-                    if (started) { stream.Push(chunk.Text); return stream.Complete; }
+                    if (started)
+                    {
+                        if (base64) return ProcessBase64(chunk.Text);
+                        stream.Push(chunk.Text); return stream.Complete;
+                    }
                     preamble += chunk.Text;
                     int index = preamble.IndexOf(marker, StringComparison.Ordinal);
                     if (index >= 0)
                     {
                         string after = preamble.Substring(index + marker.Length);
                         // The startup echo also contains the marker. A real
-                        // command starts with the PID record.
-                        if (after.StartsWith("PID:") || "PID:".StartsWith(after))
+                        // command starts with the PID record. Wait for the whole
+                        // line so base64 data after it is not decoded as output.
+                        if (after.StartsWith("PID:"))
                         {
-                            if (after.StartsWith("PID:"))
+                            int newline = after.IndexOf('\n');
+                            if (newline < 0) return false;
+                            string pidLine = after.Substring(0, newline + 1);
+                            started = true;
+                            stream.Push(marker + pidLine);
+                            preamble = "";
+                            string rest = after.Substring(newline + 1);
+                            if (rest.Length > 0)
                             {
-                                started = true;
-                                stream.Push(preamble.Substring(index));
-                                preamble = "";
-                                return stream.Complete;
+                                if (base64) return ProcessBase64(rest);
+                                stream.Push(rest);
                             }
+                            return stream.Complete;
                         }
-                        else
-                        {
-                            // Discard the stale startup echo and keep looking.
-                            preamble = after;
-                            if (preamble.Length > 65536) preamble = preamble.Substring(preamble.Length - marker.Length);
-                        }
+                        if (after.Length < "PID:".Length && "PID:".StartsWith(after)) return false;
+                        // Discard the stale startup echo and keep looking.
+                        preamble = after;
+                        if (preamble.Length > 65536) preamble = preamble.Substring(preamble.Length - marker.Length);
                     }
                     else if (preamble.Length > 65536)
                     {

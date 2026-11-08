@@ -47,6 +47,7 @@ def check(condition, message):
 remote('\n'.join([
     'mkdir -p %s/sub' % fixture,
     "printf 'hello\\n' > %s/plain.txt" % fixture,
+    "printf '\\000BINEND\\n' > %s/bin.dat" % fixture,
     "printf '#!/bin/sh\\n' > %s/exec.sh" % fixture,
     'chmod 755 %s/exec.sh' % fixture,
     ': > %s/a.zip' % fixture,
@@ -222,6 +223,14 @@ with tempfile.TemporaryDirectory(prefix='hdc-filetypes-') as folder:
         check(row_index('hello') >= 0, 'cat regular file')
         run(f'base64 {fixture}/plain.txt')
         check(any(line.strip() == 'aGVsbG8K' for line in screen.display), 'base64 regular file')
+        run(f'cat {fixture}/bin.dat')
+        check(any('BINEND' in line for line in screen.display),
+              'Simple cat is base64-transported, including NUL bytes')
+        run(f'cat {fixture}/missing')
+        check(any('No such file' in line or 'not found' in line for line in screen.display),
+              'cat error is decoded through base64')
+        run('echo cat_rc=$?')
+        check(row_index('cat_rc=1') >= 0, 'cat missing file keeps status 1')
         run(f'readlink {fixture}/linkfile')
         check(any(line.strip() == 'plain.txt' for line in screen.display), 'readlink symlink')
         if remote('command -v file >/dev/null 2>&1; echo $?').strip().endswith('0'):
@@ -251,12 +260,11 @@ with tempfile.TemporaryDirectory(prefix='hdc-filetypes-') as folder:
             run(f'cd {fixture}/{bad}')
             check(current() == prompt_text, 'cd to non-directory keeps cwd: ' + bad)
         if exists('/system/bin/init'):
+            # The small bin.dat case above covers direct binary transport; the
+            # large ELF is checked through base64 to keep the terminal fast.
             run('base64 /system/bin/init | wc -c', timeout=25)
             check(any(line.strip().isdigit() and int(line.strip()) > 100000 for line in screen.display),
-                  'base64 can carry a large binary file')
-            # hdc cannot carry NUL bytes; the session must return, not hang.
-            run('cat /system/bin/init', timeout=20)
-            check(current() == prompt_text, 'cat finite binary returns to the prompt')
+                  'base64 carries the large ELF')
 
         # ---- Expected blocking files recover with Ctrl+C, then stay usable.
         interrupt(f'cat {fixture}/fifo')
