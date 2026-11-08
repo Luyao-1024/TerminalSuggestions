@@ -103,6 +103,10 @@ class PtySession:
     def __init__(self, argv, prompt, width=200, height=60):
         self.child = pexpect.spawn(argv[0], argv[1:], encoding='utf8', timeout=30,
                                    dimensions=(height, width))
+        # pexpect sleeps 50 ms before every send by default. That inflates both
+        # the measured Enter->prompt window and each DSR response, so it must
+        # be off for a meaningful terminal-side measurement.
+        self.child.delaybeforesend = 0
         child = self.child
 
         class Terminal(pyte.Screen):

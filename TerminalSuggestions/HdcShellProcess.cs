@@ -221,7 +221,10 @@ namespace TerminalSuggestions
                 while (true)
                 {
                     if (input.Poll()) { interrupted = true; if (!stop.IsRunning) stop.Start(); }
-                    if (chunks.TryTake(out Chunk chunk, 15))
+                    // Small poll interval keeps the post-output tail short:
+                    // the loop still notices process exit promptly, and an
+                    // idle wait never adds a visible 15 ms to every command.
+                    if (chunks.TryTake(out Chunk chunk, 2))
                     {
                         int batch = 0;
                         do

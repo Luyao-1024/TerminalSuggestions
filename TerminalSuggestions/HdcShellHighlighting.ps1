@@ -102,11 +102,11 @@ function Initialize-HdcShellHighlighting {
 }
 
 function Reset-HdcShellHighlighting {
-    # A completed command can create/remove files. Refresh device listings at
-    # the next prompt rather than carrying their TTL across commands.
-    foreach ($key in @($script:HdcCache.Keys)) {
-        if ($key.StartsWith('ls:')) { $script:HdcCache.Remove($key) }
-    }
+    # Keep device directory listings for their normal 10 s TTL, the same bound
+    # completion already uses. Clearing them on every prompt forced a fresh
+    # hdc query for each directory segment of a typed path while editing the
+    # next command. The per-input frame cache and the console proxy still
+    # reset, so styles never leak between lines.
     $script:HdcShellHighlightListings = @{}
     if ($script:HdcShellPathConsole) { $script:HdcShellPathConsole.Reset() }
 }

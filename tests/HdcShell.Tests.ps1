@@ -108,6 +108,18 @@ Import-Module (Join-Path $PSScriptRoot '../TerminalSuggestions/TerminalSuggestio
     Assert-Equal (Resolve-HdcShellHighlightPath '$(touch /tmp/must-not-execute)') $null 'Highlighting never evaluates command substitution'
     Assert-Equal (Resolve-HdcShellHighlightPath '$UNKNOWN/path') $null 'Unknown variables are not expanded on the host'
 
+    # Directory listings share the 10 s completion cache across prompts; only
+    # the per-input frame cache and console styles reset for the next line.
+    $savedCache = $script:HdcCache
+    $savedListings = $script:HdcShellHighlightListings
+    $script:HdcCache = @{ 'ls:test' = @{ Time = Get-Date; Data = @('entry') } }
+    $script:HdcShellHighlightListings = @{ frame = $true }
+    Reset-HdcShellHighlighting
+    Assert-True $script:HdcCache.ContainsKey('ls:test') 'Directory listings keep their TTL across a prompt'
+    Assert-Equal $script:HdcShellHighlightListings.Count 0 'The per-input frame cache resets'
+    $script:HdcCache = $savedCache
+    $script:HdcShellHighlightListings = $savedListings
+
     # Check real editor state restoration, including pre-existing custom keys.
     Set-PSReadLineOption -EditMode Windows
     Set-PSReadLineKeyHandler -Chord 'Ctrl+f' -BriefDescription TestCustom -ScriptBlock { 'original binding' }
