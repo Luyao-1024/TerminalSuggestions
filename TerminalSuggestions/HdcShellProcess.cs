@@ -138,6 +138,24 @@ namespace TerminalSuggestions
             catch (OperationCanceledException) when (token.IsCancellationRequested) { }
         }
 
+        public static bool LooksLikeBinaryBytes(byte[] bytes)
+        {
+            int suspicious = 0;
+            foreach (byte b in bytes)
+            {
+                if (b == 0) return true;
+                if (b == 0x7f)
+                {
+                    if (++suspicious >= 2) return true;
+                }
+                else if (b < 0x20 && b != 0x09 && b != 0x0a && b != 0x0d && b != 0x1b)
+                {
+                    if (++suspicious >= 2) return true;
+                }
+            }
+            return false;
+        }
+
         public static bool LooksLikeBinary(string text)
         {
             int suspicious = 0;

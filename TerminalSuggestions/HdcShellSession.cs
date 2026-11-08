@@ -298,36 +298,93 @@ namespace TerminalSuggestions
             var b64 = new StringBuilder();
             string markerTail = "";
             Stream rawOut = null;
+            bool? showBase64 = null;
+            int base64Column = 0;
 
             void WriteDecoded(byte[] bytes)
             {
-                if (suppress) return;
+                if (suppress || bytes.Length == 0) return;
                 if (capture) { captured.Append(Encoding.UTF8.GetString(bytes)); return; }
                 if (rawOut == null) rawOut = Console.OpenStandardOutput();
                 rawOut.Write(bytes, 0, bytes.Length);
                 rawOut.Flush();
             }
 
+            void WriteBase64Text(string chars)
+            {
+                if (suppress || chars.Length == 0) return;
+                if (capture) { captured.Append(chars); return; }
+                if (rawOut == null) rawOut = Console.OpenStandardOutput();
+                foreach (char c in chars)
+                {
+                    rawOut.WriteByte((byte)c);
+                    if (++base64Column >= 76)
+                    {
+                        rawOut.WriteByte((byte)'\n');
+                        base64Column = 0;
+                    }
+                }
+                rawOut.Flush();
+            }
+
+            void ShowBase64Notice()
+            {
+                if (suppress || capture) return;
+                Console.Write("\x1b[0m\r\n[hdc shell] 二进制内容，以下为 base64；" +
+                    "可用 base64 -d 解码，原文件建议 hdc file recv。\r\n\x1b[0m");
+            }
+
             void DecodeBase64(string text)
             {
+                var filtered = new StringBuilder(text.Length);
                 foreach (char c in text)
                 {
-                    if (char.IsWhiteSpace(c)) continue;
-                    b64.Append(c);
-                    if (b64.Length < 4) continue;
-                    string group = b64.ToString(0, 4);
-                    b64.Remove(0, 4);
-                    try { WriteDecoded(Convert.FromBase64String(group)); } catch { }
+                    if (!char.IsWhiteSpace(c)) filtered.Append(c);
                 }
+                if (showBase64 == true) { WriteBase64Text(filtered.ToString()); return; }
+                b64.Append(filtered);
+                // Decode whole groups in one call. Per-4-character conversion
+                // and Remove(0, 4) made large images take minutes.
+                int chars = b64.Length - b64.Length % 4;
+                if (chars == 0) return;
+                string block = b64.ToString(0, chars);
+                b64.Remove(0, chars);
+                byte[] bytes;
+                try { bytes = Convert.FromBase64String(block); } catch { return; }
+                if (showBase64 == null)
+                {
+                    showBase64 = HdcShellProcess.LooksLikeBinaryBytes(bytes);
+                    if (showBase64 == true)
+                    {
+                        ShowBase64Notice();
+                        WriteBase64Text(block);
+                        return;
+                    }
+                }
+                WriteDecoded(bytes);
             }
 
             void FlushBase64()
             {
-                if (b64.Length < 2) { b64.Clear(); return; }
+                if (b64.Length == 0) return;
                 string group = b64.ToString();
                 b64.Clear();
-                group = group.PadRight((group.Length + 3) / 4 * 4, '=');
-                try { WriteDecoded(Convert.FromBase64String(group)); } catch { }
+                if (showBase64 == true) { WriteBase64Text(group); return; }
+                if (group.Length == 1) return;
+                string padded = group.PadRight((group.Length + 3) / 4 * 4, '=');
+                byte[] bytes;
+                try { bytes = Convert.FromBase64String(padded); } catch { return; }
+                if (showBase64 == null)
+                {
+                    showBase64 = HdcShellProcess.LooksLikeBinaryBytes(bytes);
+                    if (showBase64 == true)
+                    {
+                        ShowBase64Notice();
+                        WriteBase64Text(group);
+                        return;
+                    }
+                }
+                WriteDecoded(bytes);
             }
 
             bool ProcessBase64(string text)
@@ -341,6 +398,13 @@ namespace TerminalSuggestions
                 if (rest.StartsWith(marker, StringComparison.Ordinal))
                 {
                     FlushBase64();
+                    if (showBase64 == true && base64Column > 0 && !capture)
+                    {
+                        if (rawOut == null) rawOut = Console.OpenStandardOutput();
+                        rawOut.WriteByte((byte)'\n');
+                        rawOut.Flush();
+                        base64Column = 0;
+                    }
                     stream.Push(rest);
                     return stream.Complete;
                 }

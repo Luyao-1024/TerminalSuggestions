@@ -224,8 +224,8 @@ with tempfile.TemporaryDirectory(prefix='hdc-filetypes-') as folder:
         run(f'base64 {fixture}/plain.txt')
         check(any(line.strip() == 'aGVsbG8K' for line in screen.display), 'base64 regular file')
         run(f'cat {fixture}/bin.dat')
-        check(any('BINEND' in line for line in screen.display),
-              'Simple cat is base64-transported, including NUL bytes')
+        check(any('二进制内容' in line or 'AEJJTkVORAo=' in line for line in screen.display),
+              'Simple binary cat is displayed as base64, including NUL bytes')
         run(f'cat {fixture}/missing')
         check(any('No such file' in line or 'not found' in line for line in screen.display),
               'cat error is decoded through base64')

@@ -400,6 +400,84 @@ function Test-HdcShellSimpleCat {
     return $true
 }
 
+function Get-HdcShellFastCatPath {
+    param([AllowEmptyString()][string]$Line, [string]$Cwd, [string]$Application, [string]$Serial)
+    $text = $Line.Trim()
+    if ($text -cnotmatch '^cat\s') { return $null }
+    if ($text -match '[|&;<>`]' -or $text -match '\$\(|[\r\n]') { return $null }
+    $pattern = '(?<Comment>\#[^\n]*)|(?<Operator>\d*(?:>>?|<<?)|\|\||&&|[|;&()\n])|(?<Word>(?:''[^'']*(?:''|$)|"(?:\\.|[^"\\])*(?:"|$)|\\.|[^\s''"\\|&;<>()])+)'
+    $words = [Collections.Generic.List[string]]::new()
+    foreach ($token in [regex]::Matches($text, $pattern)) {
+        if ($token.Groups['Comment'].Success -or $token.Groups['Operator'].Success) { return $null }
+        if (-not $token.Groups['Word'].Success) { return $null }
+        $words.Add((ConvertFrom-HdcShellWord $token.Value))
+    }
+    if ($words.Count -ne 2 -or $words[0] -cne 'cat') { return $null }
+    $path = $words[1]
+    if (-not $path -or $path.StartsWith('-')) { return $null }
+    if ($path -match '[*?\[\]{}~$]') { return $null }
+    $remote = if ($path.StartsWith('/')) { $path }
+        elseif (-not $Cwd -or $Cwd -eq '/') { '/' + $path }
+        else { $Cwd.TrimEnd('/') + '/' + $path }
+    # Only regular files use the file channel. Directories, FIFOs and device
+    # nodes keep the ordinary device-side cat semantics.
+    $quoted = "'" + $remote.Replace("'", "'\''") + "'"
+    try {
+        # hdc shell does not propagate the remote exit status; use a visible
+        # probe line so a FIFO/directory/missing path is not sent to file recv.
+        $response = Invoke-HdcCapture $Application @('-t', $Serial, 'shell',
+            "if [ -f $quoted ]; then printf 'YES\n'; else printf 'NO\n'; fi") -TimeoutSeconds 3
+    } catch { return $null }
+    if (-not (@($response.Lines) -contains 'YES')) { return $null }
+    return $remote
+}
+
+function Receive-HdcFileToTemp {
+    param([string]$Application, [string]$Serial, [string]$RemotePath)
+    $temp = [IO.Path]::Combine([IO.Path]::GetTempPath(), [IO.Path]::GetRandomFileName())
+    $process = [Diagnostics.Process]::new()
+    $process.StartInfo = [Diagnostics.ProcessStartInfo]::new()
+    $process.StartInfo.FileName = $Application
+    $process.StartInfo.UseShellExecute = $false
+    $process.StartInfo.RedirectStandardInput = $true
+    $process.StartInfo.RedirectStandardOutput = $true
+    $process.StartInfo.RedirectStandardError = $true
+    foreach ($argument in @('-t', $Serial, 'file', 'recv', $RemotePath, $temp)) {
+        $process.StartInfo.ArgumentList.Add($argument)
+    }
+    $success = $false
+    try {
+        [void]$process.Start()
+        $process.StandardInput.Close()
+        $stdout = $process.StandardOutput.ReadToEndAsync()
+        $stderr = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit(5000)) { $process.Kill($true); return $null }
+        $process.WaitForExit()
+        $text = $stdout.GetAwaiter().GetResult() + $stderr.GetAwaiter().GetResult()
+        if ($text -match '\[Fail\]|Error') { return $null }
+        if (-not (Test-Path -LiteralPath $temp)) { return $null }
+        $success = $true
+        [pscustomobject]@{ Path = $temp; Size = (Get-Item -LiteralPath $temp).Length }
+    } catch { return $null }
+    finally {
+        try { if (-not $process.HasExited) { $process.Kill($true) } } catch { }
+        $process.Dispose()
+        if (-not $success) { Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue }
+    }
+}
+
+function Write-HdcShellBase64Bytes {
+    param([byte[]]$Bytes)
+    [Console]::Write("`e[0m`r`n[hdc shell] 二进制内容，以下为 base64；可用 base64 -d 解码，原文件建议 hdc file recv。`r`n`e[0m")
+    $text = [Convert]::ToBase64String($Bytes)
+    $builder = [Text.StringBuilder]::new($text.Length + [Math]::Ceiling($text.Length / 76) + 1)
+    for ($i = 0; $i -lt $text.Length; $i += 76) {
+        $count = [Math]::Min(76, $text.Length - $i)
+        [void]$builder.Append($text, $i, $count).Append("`n")
+    }
+    [Console]::Write($builder.ToString())
+}
+
 function Enter-HdcShell {
     [CmdletBinding()]
     param(
@@ -565,8 +643,45 @@ function Enter-HdcShell {
             # otherwise the per-command RPC path preserves state and limits.
             [Console]::Write($PSStyle.Reset)
             $result = $null
+            # Large regular-file cat goes through hdc's binary file channel:
+            # the shell channel is limited to roughly 0.4 MB/s for base64 text,
+            # while file recv is tens of MB/s on the same link.
+            $fastPath = $null
+            try {
+                if ($script:HdcShellSession -and $script:HdcShellSession.Alive) {
+                    $fastPath = Get-HdcShellFastCatPath -Line $execLine -Cwd $cwd `
+                        -Application $exe.Source -Serial $Serial
+                }
+                if ($fastPath) {
+                    $received = Receive-HdcFileToTemp -Application $exe.Source -Serial $Serial -RemotePath $fastPath
+                    if ($received) {
+                        try {
+                            $bytes = [IO.File]::ReadAllBytes($received.Path)
+                            [Console]::Write($PSStyle.Reset)
+                            if ([TerminalSuggestions.HdcShellProcess]::LooksLikeBinaryBytes($bytes)) {
+                                Write-HdcShellBase64Bytes $bytes
+                            } else {
+                                $stdoutStream = [Console]::OpenStandardOutput()
+                                $stdoutStream.Write($bytes, 0, $bytes.Length)
+                                $stdoutStream.Flush()
+                            }
+                            $result = [TerminalSuggestions.HdcShellProcessResult]::new()
+                            $result.ExitCode = 0
+                        } finally {
+                            Remove-Item -LiteralPath $received.Path -Force -ErrorAction SilentlyContinue
+                        }
+                    }
+                }
+            } catch [System.Management.Automation.PipelineStoppedException] {
+                # Ctrl+C during the file-channel preparation must not leave the
+                # device shell.
+                $script:HdcShellLastExitCode = 130
+                $global:LASTEXITCODE = 130
+                [Console]::WriteLine('^C')
+                continue
+            }
             $binaryTransport = Test-HdcShellSimpleCat $execLine
-            if ($script:HdcShellSession -and $script:HdcShellSession.Alive -and
+            if (-not $result -and $script:HdcShellSession -and $script:HdcShellSession.Alive -and
                 $script:HdcShellSession.CanRun($execLine, $cwd, $script:HdcShellOldCwd,
                     $script:HdcShellLastExitCode, $binaryTransport)) {
                 $result = $script:HdcShellSession.Run($execLine, $cwd, $script:HdcShellOldCwd,
