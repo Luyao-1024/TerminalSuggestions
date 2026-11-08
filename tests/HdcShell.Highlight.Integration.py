@@ -57,7 +57,7 @@ for label, events in cases.items():
                 if kind == 'pwsh':
                     for i, underlined in enumerate(attributes):
                         foreground = session.screen.buffer[row][start + i].fg
-                        if (foreground == 'brightcyan') != underlined:
+                        if (foreground == '00ffff') != underlined:
                             raise AssertionError(f'{label}: expected path color at {i}={underlined}, got {foreground}; {line!r}')
                 checkpoints.append((line, cursor, attributes))
             if 'exception occurred in custom key handler' in session.log.lower():

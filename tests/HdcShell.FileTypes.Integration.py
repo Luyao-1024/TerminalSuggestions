@@ -184,11 +184,11 @@ with tempfile.TemporaryDirectory(prefix='hdc-filetypes-') as folder:
 
         # ---- Input emphasis: existence follows symlinks like zsh (-L || -e).
         for text, needle, color, underline in [
-                (f'cat {fixture}/plain.txt', f'{fixture}/plain.txt', 'brightcyan', True),
-                (f'cat {fixture}/broken', f'{fixture}/broken', 'brightcyan', True),
-                (f'cd {fixture}/linkdir', f'{fixture}/linkdir', 'brightcyan', True),
-                (f'cd {fixture}/linkfile', f'{fixture}/linkfile', 'brightcyan', True),
-                (f'cd {fixture}/fifo', f'{fixture}/fifo', 'brightcyan', True),
+                (f'cat {fixture}/plain.txt', f'{fixture}/plain.txt', '00ffff', True),
+                (f'cat {fixture}/broken', f'{fixture}/broken', '00ffff', True),
+                (f'cd {fixture}/linkdir', f'{fixture}/linkdir', '00ffff', True),
+                (f'cd {fixture}/linkfile', f'{fixture}/linkfile', '00ffff', True),
+                (f'cd {fixture}/fifo', f'{fixture}/fifo', '00ffff', True),
                 (f'cat {fixture}/missing', f'{fixture}/missing', 'default', False)]:
             type_line(text)
             expect_color(needle, color, underline)
@@ -198,8 +198,8 @@ with tempfile.TemporaryDirectory(prefix='hdc-filetypes-') as folder:
         run(f'ls -l {fixture}')
         for name, color in [('a.zip', 'brightred'), ('i.png', 'brightmagenta'),
                             ('v.mp4', 'magenta'), ('exec.sh', 'brightgreen'),
-                            ('linkdir', 'brightcyan'), ('linkfile', 'brightcyan'),
-                            ('broken', 'brightcyan'), ('fifo', 'brightbrown'),
+                            ('linkdir', '00ffff'), ('linkfile', '00ffff'),
+                            ('broken', '00ffff'), ('fifo', 'brightbrown'),
                             ('plain.txt', 'default'), ('sub', 'brightblue')]:
             index = long_row_index(name)
             check(index >= 0, 'ls -l missing entry: ' + name)
@@ -270,6 +270,10 @@ with tempfile.TemporaryDirectory(prefix='hdc-filetypes-') as folder:
         check(index >= 0, 'ls -l after interrupts')
         expect_color('sub', 'brightblue', row=index)
 
+        # Exit the enhanced shell normally so its persistent hdc session is
+        # disposed instead of being orphaned by the pexpect teardown.
+        child.send('\x04')
+        wait(lambda: '已退出 hdc shell。' in '\n'.join(screen.display), 'Ctrl+D did not exit', 10)
         print(f'PASS: {checks} file-type color and command checks')
     finally:
         if child.isalive():

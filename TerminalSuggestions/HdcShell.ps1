@@ -131,7 +131,7 @@ function Get-HdcShellFileColor {
     switch ($Kind) {
         'd' { return $PSStyle.Foreground.BrightBlue }
         'x' { return $PSStyle.Foreground.BrightGreen }
-        'l' { return $PSStyle.Foreground.BrightCyan }
+        'l' { return $PSStyle.Foreground.FromRgb(0x00FFFF) }
         'p' { return $PSStyle.Foreground.BrightYellow }
         's' { return $PSStyle.Foreground.BrightMagenta }
         'c' { return $PSStyle.Foreground.BrightYellow }
@@ -298,8 +298,8 @@ function Write-HdcShellLongOutput {
             if ($arrowIndex -ge 0) {
                 $left = $name.Substring(0, $arrowIndex)
                 $target = $name.Substring($arrowIndex + $arrow.Length)
-                $rendered = $head + "$($PSStyle.Foreground.BrightCyan)$left$($PSStyle.Reset)$arrow" +
-                    "$($PSStyle.Foreground.BrightCyan)$target$($PSStyle.Reset)"
+                $rendered = $head + "$($PSStyle.Foreground.FromRgb(0x00FFFF))$left$($PSStyle.Reset)$arrow" +
+                    "$($PSStyle.Foreground.FromRgb(0x00FFFF))$target$($PSStyle.Reset)"
             } else {
                 $color = Get-HdcShellFileColor $name $kind
                 $rendered = $head + $(if ($color) { "$color$name$($PSStyle.Reset)" } else { $name })

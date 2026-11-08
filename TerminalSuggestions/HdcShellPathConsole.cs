@@ -119,7 +119,7 @@ namespace TerminalSuggestions
                     continue;
                 }
                 bool path = visible < wanted.Count && wanted[visible];
-                string foreground = path ? "\x1b[96m" : nativeForeground;
+                string foreground = path ? "\x1b[38;2;0;255;255m" : nativeForeground;
                 bool underline = path || nativeUnderline;
                 if (foreground != actualForeground) result.Append(foreground);
                 if (underline != actualUnderline) result.Append(underline ? "\x1b[4m" : "\x1b[24m");

@@ -102,17 +102,17 @@ with tempfile.TemporaryDirectory(prefix='hdc-shell-test-') as temp:
         check(current().endswith(prompt_text + ' cd /data/local/'), 'Remote directory completion')
         path_start = len(prompt_text + ' cd ')
         check(all(screen.buffer[screen.cursor.y][i].underscore for i in range(path_start, path_start + len('/data/local/'))), 'Existing completed device directory is emphasized before Enter')
-        check(all(screen.buffer[screen.cursor.y][i].fg == 'brightcyan' for i in range(path_start, path_start + len('/data/local/'))), 'Existing completed device directory has visible cyan emphasis')
+        check(all(screen.buffer[screen.cursor.y][i].fg == '00ffff' for i in range(path_start, path_start + len('/data/local/'))), 'Existing completed device directory has visible cyan emphasis')
         send('\x03')
         send('cd /home/luyao')
         check(not any(screen.buffer[screen.cursor.y][i].underscore for i in range(path_start, path_start + len('/home/luyao'))), 'A host-only path is not emphasized on the device')
-        check(not any(screen.buffer[screen.cursor.y][i].fg == 'brightcyan' for i in range(path_start, path_start + len('/home/luyao'))), 'A missing device path retains its normal foreground')
+        check(not any(screen.buffer[screen.cursor.y][i].fg == '00ffff' for i in range(path_start, path_start + len('/home/luyao'))), 'A missing device path retains its normal foreground')
         send('\x03')
         screenshot_path = '/data/service/el2/100/hmdfs'
         if subprocess.check_output(['hdc', '-t', serial, 'shell', 'test -d ' + screenshot_path + ' && printf exists'], text=True).strip() == 'exists':
             send('cd ' + screenshot_path)
             wait(prompt_text + ' cd ' + screenshot_path)
-            check(all(screen.buffer[screen.cursor.y][i].fg == 'brightcyan' and screen.buffer[screen.cursor.y][i].underscore
+            check(all(screen.buffer[screen.cursor.y][i].fg == '00ffff' and screen.buffer[screen.cursor.y][i].underscore
                       for i in range(path_start, path_start + len(screenshot_path))), 'The exact path from the user screenshot is cyan and underlined before Enter')
             send('\x03')
         command('pwd')

@@ -208,17 +208,17 @@ with tempfile.TemporaryDirectory(prefix='hdc-commands-') as folder:
 
         # ---- Input emphasis: each command class keeps its own argument styles.
         for text, needle, color, underline in [
-                (f'cat {fixture}/plain.txt', f'{fixture}/plain.txt', 'brightcyan', True),
+                (f'cat {fixture}/plain.txt', f'{fixture}/plain.txt', '00ffff', True),
                 (f'cat {fixture}/missing.txt', f'{fixture}/missing.txt', 'default', False),
-                (f'cd {fixture}/sub', f'{fixture}/sub', 'brightcyan', True),
-                (f'ls {fixture}', fixture, 'brightcyan', True),
-                (f'find {fixture} -name plain.txt', fixture, 'brightcyan', True)]:
+                (f'cd {fixture}/sub', f'{fixture}/sub', '00ffff', True),
+                (f'ls {fixture}', fixture, '00ffff', True),
+                (f'find {fixture} -name plain.txt', fixture, '00ffff', True)]:
             type_line(text)
             expect_color(needle, color, underline)
             check(cells(text.split()[0])[0][0] == 'green', 'Command name is green: ' + text)
             cancel_input()
         type_line(f'grep hello {fixture}/plain.txt')
-        expect_color(f'{fixture}/plain.txt', 'brightcyan', True)
+        expect_color(f'{fixture}/plain.txt', '00ffff', True)
         expect_default('hello')
         cancel_input()
         type_line(f'cat "{fixture}/plain.txt"')
@@ -280,7 +280,7 @@ with tempfile.TemporaryDirectory(prefix='hdc-commands-') as folder:
         expect_color('archive.zip', 'brightred')
         expect_color('exec.sh', 'brightgreen')
         expect_color('image.png', 'brightmagenta')
-        expect_color('link', 'brightcyan')
+        expect_color('link', '00ffff')
         expect_color('pipe', 'brightbrown')
         expect_color('plain.txt', 'default')
         expect_color('sub', 'brightblue')
@@ -299,7 +299,7 @@ with tempfile.TemporaryDirectory(prefix='hdc-commands-') as folder:
         for name, mode_color, name_color in (('archive.zip', 'brightred', 'brightred'),
                                              ('exec.sh', 'brightgreen', 'brightgreen'),
                                              ('image.png', 'brightmagenta', 'brightmagenta'),
-                                             ('link', 'brightcyan', 'brightcyan'),
+                                             ('link', '00ffff', '00ffff'),
                                              ('pipe', 'brightbrown', 'brightbrown'),
                                              ('plain.txt', 'default', 'default'),
                                              ('sub', 'brightblue', 'brightblue'),
@@ -310,7 +310,7 @@ with tempfile.TemporaryDirectory(prefix='hdc-commands-') as folder:
             expect_color(name, name_color, row_number=index)
         link_row = long_row_index('link')
         check('link -> sub' in screen.display[link_row], 'symlink target is retained')
-        expect_color('sub', 'brightcyan', row_number=link_row)
+        expect_color('sub', '00ffff', row_number=link_row)
 
         run(f'ls -R {fixture}')
         expect_color(fixture + ':', 'brightblue')

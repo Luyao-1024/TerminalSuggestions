@@ -281,7 +281,7 @@ namespace TerminalSuggestions
                     suppress = true;
                     if (!capture)
                         Console.Write("\x1b[0m\r\n[hdc shell] 检测到二进制输出，已停止显示；" +
-                            "请使用 base64/xxd/od 查看，或使用 hdc shell --raw。\x1b[0m\r\n");
+                            "请使用 base64/xxd/od 查看，或用 hdc file recv 传输文件。\x1b[0m\r\n");
                     return;
                 }
                 rawWrite(text);

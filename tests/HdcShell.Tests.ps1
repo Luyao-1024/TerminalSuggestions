@@ -127,12 +127,12 @@ Import-Module (Join-Path $PSScriptRoot '../TerminalSuggestions/TerminalSuggestio
     Enable-HdcShellEditor
     Assert-True (-not [object]::ReferenceEquals($saved.Console, $saved.ConsoleField.GetValue($saved.Instance))) 'The device editor adds its path renderer'
     $styled = [TerminalSuggestions.HdcShellPathConsole]::Emphasize("`e[32mcd `e[0m/data`e[39m next", 'cd /data next', 0, 0, @(3, 5))
-    Assert-True ($styled.Contains("`e[96m`e[4m/data`e[39m`e[24m next")) 'Path color and underline end before the next argument'
+    Assert-True ($styled.Contains("`e[38;2;0;255;255m`e[4m/data`e[39m`e[24m next")) 'Path color and underline end before the next argument'
     $styled = [TerminalSuggestions.HdcShellPathConsole]::Emphasize("`e[33m'a`e[0m b'`e[90m prediction", "'a b'", 0, 0, @(0, 5))
-    Assert-True ($styled.Contains("`e[0m`e[96m`e[4m b'")) 'A native color reset inside a path does not lose its color or underline'
+    Assert-True ($styled.Contains("`e[0m`e[38;2;0;255;255m`e[4m b'")) 'A native color reset inside a path does not lose its color or underline'
     Assert-True ($styled.EndsWith("`e[90m`e[24m prediction")) 'Gray prediction text never inherits path emphasis'
     $styled = [TerminalSuggestions.HdcShellPathConsole]::Emphasize("`e[38;2;0;128;255m/data next", '/data next', 0, 0, @(0, 5))
-    Assert-True ($styled.Contains("`e[96m`e[4m/data`e[38;2;0;128;255m`e[24m next")) 'The following text recovers its original RGB color including zero components'
+    Assert-True ($styled.Contains("`e[38;2;0;255;255m`e[4m/data`e[38;2;0;128;255m`e[24m next")) 'The following text recovers its original RGB color including zero components'
     Add-Type -TypeDefinition @'
 public static class HdcMenuCoordinateProbe {
     public static void ResizeDuringFrame() {
