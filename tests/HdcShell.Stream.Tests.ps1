@@ -34,4 +34,8 @@ $builder.Clear() | Out-Null
 $stream.Push($marker + "not-a-control-record`n")
 $stream.Finish()
 Check $builder.ToString() ($marker + "not-a-control-record`n") 'Malformed metadata is displayed without swallowing output'
+Check ([TerminalSuggestions.HdcShellProcess]::LooksLikeBinary('plain text')) $false 'Text is not binary'
+Check ([TerminalSuggestions.HdcShellProcess]::LooksLikeBinary("`e[31mred`e[0m")) $false 'ANSI color output is not binary'
+Check ([TerminalSuggestions.HdcShellProcess]::LooksLikeBinary("nul`0byte")) $true 'NUL marks binary output'
+Check ([TerminalSuggestions.HdcShellProcess]::LooksLikeBinary("$([char]1)$([char]2)")) $true 'Control-byte streams are binary'
 Write-Host "PASS: $checks stream protocol checks"

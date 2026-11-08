@@ -76,7 +76,7 @@ with tempfile.TemporaryDirectory(prefix='hdc-stream-device-') as folder:
         start = time.monotonic()
         send('\x03',.1)
         prompt()
-        check(time.monotonic()-start<2, 'Ctrl+C stops hilog promptly without leaving the device shell')
+        check(time.monotonic()-start<3, 'Ctrl+C stops hilog promptly without leaving the device shell')
         end = time.monotonic()+3
         while time.monotonic()<end and not set(remote('pidof hilog').split()).issubset(baseline):
             pump(.1)

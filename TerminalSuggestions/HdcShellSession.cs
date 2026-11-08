@@ -268,10 +268,24 @@ namespace TerminalSuggestions
             if (line.Length > MaxScriptLength) return result;
 
             var captured = capture ? new StringBuilder() : null;
-            bool suppress = false;
-            Action<string> write = capture
-                ? text => { if (!suppress) captured.Append(text); }
-                : text => { if (!suppress) Console.Write(text); };
+            bool suppress = false, binaryHalt = false;
+            Action<string> rawWrite = capture
+                ? text => captured.Append(text)
+                : text => Console.Write(text);
+            Action<string> write = text =>
+            {
+                if (suppress || binaryHalt) return;
+                if (HdcShellProcess.LooksLikeBinary(text))
+                {
+                    binaryHalt = true;
+                    suppress = true;
+                    if (!capture)
+                        Console.Write("\x1b[0m\r\n[hdc shell] 检测到二进制输出，已停止显示；" +
+                            "请使用 base64/xxd/od 查看，或使用 hdc shell --raw。\x1b[0m\r\n");
+                    return;
+                }
+                rawWrite(text);
+            };
             var stream = new HdcShellOutputStream(marker, write);
             var queue = new ConcurrentQueue<Chunk>();
             active = queue;
@@ -334,6 +348,7 @@ namespace TerminalSuggestions
                         if (Process(chunk)) break;
                     }
                     if (stream.Complete) break;
+                    if (binaryHalt && !interrupted) { interrupted = true; if (!stop.IsRunning) stop.Start(); }
                     if (interrupted && !process.HasExited)
                     {
                         if (signalStage == 0 && stream.Pid > 1) { HdcShellProcess.Signal(application, serial, stream, "INT"); signalStage = 1; }
@@ -354,8 +369,9 @@ namespace TerminalSuggestions
                 stream.Finish();
                 result = new HdcShellProcessResult {
                     ExitCode = interrupted ? 130 : stream.ExitCode ?? 1,
-                    Directory = stream.Directory, Interrupted = interrupted,
-                    Output = captured?.ToString(), Faulted = !stream.Complete && !interrupted
+                    Directory = stream.Directory, Interrupted = interrupted && !binaryHalt,
+                    BinaryHalt = binaryHalt,
+                    Output = captured?.ToString(), Faulted = faulted || (!stream.Complete && !interrupted && !binaryHalt)
                 };
                 return result;
             }

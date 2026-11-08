@@ -47,7 +47,9 @@ function Get-HdcShellHomePath {
 function Get-HdcShellPrompt {
     $display = if ($script:HdcShellCwd -eq '/') { '/' } else { ($script:HdcShellCwd.TrimEnd('/') -split '/')[-1] }
     $arrow = if ($script:HdcShellLastExitCode -eq 0) { $PSStyle.Foreground.Green } else { $PSStyle.Foreground.Red }
-    "$($PSStyle.Foreground.Blue)$script:HdcShellSerial $display$($PSStyle.Reset) $arrow->$($PSStyle.Reset) "
+    # Start with a hard reset: binary output or an interrupted command must not
+    # leak its SGR attributes into the prompt.
+    "$($PSStyle.Reset)$($PSStyle.Foreground.Blue)$script:HdcShellSerial $display$($PSStyle.Reset) $arrow->$($PSStyle.Reset) "
 }
 
 function Import-HdcShellHistory {
@@ -85,6 +87,9 @@ function Save-HdcShellHistory {
 function Write-HdcShellText {
     param([object[]]$Lines)
     if (-not $Lines -or $Lines.Count -eq 0) { return }
+    # Output must not inherit an SGR attribute left by the input line or a
+    # binary/special file. Start from a hard reset.
+    [Console]::Write($PSStyle.Reset)
     # One console write per 256 lines keeps large outputs fast without
     # building a second full copy of the text in memory.
     $builder = [System.Text.StringBuilder]::new()
@@ -170,6 +175,7 @@ function Write-HdcShellOutput {
     param([object[]]$Lines, [string]$Mode = 'none', [string]$MarkerMode = 'none')
     if ($Mode -eq 'none') { Write-HdcShellText $Lines; return }
     if (-not $Lines -or $Lines.Count -eq 0) { return }
+    [Console]::Write($PSStyle.Reset)
     if ($Mode -eq 'long') { Write-HdcShellLongOutput $Lines; return }
     if ($Mode -eq 'single') { Write-HdcShellSingleOutput $Lines $MarkerMode; return }
     Write-HdcShellColumnOutput $Lines $MarkerMode
@@ -193,6 +199,7 @@ function Write-HdcShellColumnOutput {
         $builder = [System.Text.StringBuilder]::new()
         for ($r = 0; $r -lt $rows; $r++) {
             $row = [System.Text.StringBuilder]::new()
+            [void]$row.Append($PSStyle.Reset)
             for ($c = 0; $c -lt $cols; $c++) {
                 $index = $c * $rows + $r
                 if ($index -ge $names.Count) { continue }
@@ -243,18 +250,18 @@ function Write-HdcShellSingleOutput {
         if (-not $text) {
             [void]$builder.AppendLine()
         } elseif ($text.EndsWith(':')) {
-            [void]$builder.AppendLine("$($PSStyle.Foreground.BrightBlue)$text$($PSStyle.Reset)")
+            [void]$builder.AppendLine("$($PSStyle.Reset)$($PSStyle.Foreground.BrightBlue)$text$($PSStyle.Reset)")
         } elseif ($text -match '^(.+?)([/@*|=])$') {
             $name = $Matches[1]
             $marker = $Matches[2][0]
             $suffix = Get-HdcShellMarkerSuffix $marker $MarkerMode
             $color = Get-HdcShellFileColor $name (Get-HdcShellMarkerKind $marker)
             $rendered = if ($color) { "$color$name$suffix$($PSStyle.Reset)" } else { $name + $suffix }
-            [void]$builder.AppendLine($rendered)
+            [void]$builder.AppendLine("$($PSStyle.Reset)$rendered")
         } else {
             $color = Get-HdcShellFileColor $text ([char]'-')
             $rendered = if ($color) { "$color$text$($PSStyle.Reset)" } else { $text }
-            [void]$builder.AppendLine($rendered)
+            [void]$builder.AppendLine("$($PSStyle.Reset)$rendered")
         }
         if (++$pending -ge 256) {
             [Console]::Write($builder.ToString())
@@ -298,7 +305,7 @@ function Write-HdcShellLongOutput {
                 $rendered = $head + $(if ($color) { "$color$name$($PSStyle.Reset)" } else { $name })
             }
         }
-        [void]$builder.AppendLine($rendered)
+        [void]$builder.AppendLine("$($PSStyle.Reset)$rendered")
         if (++$pending -ge 256) {
             [Console]::Write($builder.ToString())
             [void]$builder.Clear()
@@ -537,6 +544,7 @@ function Enter-HdcShell {
             # output is locally reformatted retain the existing buffered view.
             # The persistent session is used when it can carry this command;
             # otherwise the per-command RPC path preserves state and limits.
+            [Console]::Write($PSStyle.Reset)
             $result = $null
             if ($script:HdcShellSession -and $script:HdcShellSession.Alive -and
                 $script:HdcShellSession.CanRun($execLine, $cwd, $script:HdcShellOldCwd,

@@ -63,6 +63,8 @@ Enter-HdcShell -Serial <serial>    # 直接调用入口
 
 直接执行 `hilog`、`dmesg` 等设备命令即可。Ctrl+C 中断当前命令并留在设备会话；`exit` 或空行 Ctrl+D 退出。设备会话不转发交互输入，只输入 `cat` 等读取 stdin 的命令会立即结束，不会挂起。
 
+二进制文件（例如 `/system/bin/init`）建议使用 `base64`、`xxd` 或 `od` 查看：hdc 通道不能可靠传输 NUL/控制字节，直接 `cat` 会截断输出；增强会话检测到二进制输出后会停止显示并给出提示。`/dev/zero`、`/dev/urandom` 等无限设备本身不会结束，可用 Ctrl+C 恢复会话。
+
 需要运行 `vi`、`top` 等交互程序时，使用原始透传模式：
 
 ```powershell

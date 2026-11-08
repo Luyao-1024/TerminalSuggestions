@@ -17,6 +17,7 @@ namespace TerminalSuggestions
         public string Directory;
         public bool Interrupted;
         public bool Faulted;
+        public bool BinaryHalt;
         public string Output;
     }
 
@@ -137,6 +138,24 @@ namespace TerminalSuggestions
             catch (OperationCanceledException) when (token.IsCancellationRequested) { }
         }
 
+        public static bool LooksLikeBinary(string text)
+        {
+            int suspicious = 0;
+            foreach (char c in text)
+            {
+                if (c == '\0') return true;
+                if (c == '�' || c == '\x7f')
+                {
+                    if (++suspicious >= 2) return true;
+                }
+                else if (c < 0x20 && c != '\t' && c != '\n' && c != '\r' && c != '\x1b')
+                {
+                    if (++suspicious >= 2) return true;
+                }
+            }
+            return false;
+        }
+
         internal static void Signal(string application, string serial, HdcShellOutputStream stream, string signal)
         {
             // Signal only the verified group of this RPC, never a command name
@@ -229,10 +248,24 @@ namespace TerminalSuggestions
         public static HdcShellProcessResult Run(string application, string serial, string command, string marker, bool capture, Type editorType)
         {
             var captured = capture ? new StringBuilder() : null;
-            bool suppress = false;
-            Action<string> write = capture
-                ? text => { if (!suppress) captured.Append(text); }
-                : text => { if (!suppress) Console.Write(text); };
+            bool suppress = false, binaryHalt = false;
+            Action<string> rawWrite = capture
+                ? text => captured.Append(text)
+                : text => Console.Write(text);
+            Action<string> write = text =>
+            {
+                if (suppress || binaryHalt) return;
+                if (LooksLikeBinary(text))
+                {
+                    binaryHalt = true;
+                    suppress = true;
+                    if (!capture)
+                        Console.Write("\x1b[0m\r\n[hdc shell] 检测到二进制输出，已停止显示；" +
+                            "请使用 base64/xxd/od 查看，或使用 hdc shell --raw。\x1b[0m\r\n");
+                    return;
+                }
+                rawWrite(text);
+            };
             var stream = new HdcShellOutputStream(marker, write);
             using var input = new Input(editorType);
             using var process = CreateProcess(application, new[] { "-t", serial, "shell", command });
@@ -269,6 +302,10 @@ namespace TerminalSuggestions
                             if (chunk.Error) write(chunk.Text); else stream.Push(chunk.Text);
                         } while (++batch < 16 && chunks.TryTake(out chunk));
                     }
+                    // A binary stream cannot cross the hdc channel reliably
+                    // (NUL/control bytes truncate it), so stop the command and
+                    // return to the prompt instead of waiting forever.
+                    if (binaryHalt && !interrupted) { interrupted = true; if (!stop.IsRunning) stop.Start(); }
                     if (interrupted && !process.HasExited)
                     {
                         if (signalStage == 0 && stream.Pid > 1) { Signal(application, serial, stream, "INT"); signalStage = 1; }
@@ -286,8 +323,8 @@ namespace TerminalSuggestions
                 stream.Finish();
                 return new HdcShellProcessResult {
                     ExitCode = interrupted ? 130 : stream.ExitCode ?? process.ExitCode,
-                    Directory = stream.Directory, Interrupted = interrupted,
-                    Output = captured?.ToString()
+                    Directory = stream.Directory, Interrupted = interrupted && !binaryHalt,
+                    BinaryHalt = binaryHalt, Output = captured?.ToString()
                 };
             }
             finally
