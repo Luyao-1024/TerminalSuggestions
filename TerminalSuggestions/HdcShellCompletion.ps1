@@ -69,7 +69,12 @@ function Get-HdcShellMenuViewport {
 
 function Clear-HdcShellCompletionMenu {
     $state = $script:HdcShellCompletionState
-    if (-not $state.Menu) { return }
+    if (-not $state -or -not $state.Menu) {
+        # The menu was drawn but its state was already discarded (for example
+        # by a fast Enter or a redraw). Leave the drawn flag set so the prompt
+        # loop erases the leftovers before drawing the next prompt.
+        return
+    }
     $menu = $state.Menu
     # Detach before drawing/clearing: even a failed console operation must not
     # leave an invalid menu to throw again during cancellation or shell cleanup.
@@ -82,7 +87,8 @@ function Clear-HdcShellCompletionMenu {
         $state.MenuHeight -ne $console.WindowHeight -or $state.MenuBufferHeight -ne $console.BufferHeight
     if ($resized -or $top -lt 0 -or $top + $rows -gt $console.BufferHeight) {
         # Coordinates saved before a resize/scroll no longer describe the
-        # screen. Re-anchor the existing input without accepting or editing it.
+        # screen. Re-anchor the existing input without accepting or editing it;
+        # the prompt loop still erases any stale menu rows.
         [Microsoft.PowerShell.PSConsoleReadLine]::InvokePrompt($null, 0)
         return
     }
@@ -90,6 +96,9 @@ function Clear-HdcShellCompletionMenu {
         if (-not [TerminalSuggestions.HdcShellMenuRenderer]::TryInvoke($api.Clear, $menu, @())) {
             [Microsoft.PowerShell.PSConsoleReadLine]::InvokePrompt($null, 0)
         }
+        # Keep the drawn flag set: the prompt loop performs one idempotent
+        # erase-to-end-of-screen before drawing the next prompt, which also
+        # covers console implementations whose Clear leaves a row behind.
     } finally { $console.CursorVisible = $true }
 }
 
@@ -131,6 +140,7 @@ function Show-HdcShellCompletionMenu {
     $drawn = $false
     try {
         $drawn = [TerminalSuggestions.HdcShellMenuRenderer]::TryInvoke($api.Draw, $menu, @($null, $true))
+        if ($drawn) { $script:HdcShellCompletionDrawn = $true }
         if ($drawn -and $view.SelectedIndex -ge 0) {
             $drawn = [TerminalSuggestions.HdcShellMenuRenderer]::TryInvoke(
                 $api.Highlight, $menu, @($view.SelectedIndex, $true, $false, (Get-PSReadLineOption).EmphasisColor))
@@ -269,6 +279,7 @@ function Initialize-HdcShellCompletion {
         Selection = $menuType.GetField('CurrentSelection', $flags)
     }
     $script:HdcShellCompletionState = $null
+    $script:HdcShellCompletionDrawn = $false
     Set-PSReadLineKeyHandler -Chord 'Ctrl+f' -BriefDescription HdcForwardChar -ScriptBlock {
         param($key, $arg)
         Clear-HdcShellCompletionMenu

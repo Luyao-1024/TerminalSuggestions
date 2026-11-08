@@ -517,6 +517,13 @@ function Enter-HdcShell {
             $script:HdcShellExit = $false
             $script:HdcShellCancelled = $false
             $script:HdcShellCompletionState = $null
+            # A menu that was drawn and not fully erased (fast Enter, lost
+            # state or a failed clear) must not leave candidate text beside the
+            # next prompt. Erase from the cursor to the end of the screen.
+            if ($script:HdcShellCompletionDrawn) {
+                [Console]::Write("`e[0J")
+                $script:HdcShellCompletionDrawn = $false
+            }
             [Console]::Write((& prompt))
             try {
                 $line = [Microsoft.PowerShell.PSConsoleReadLine]::ReadLine(
@@ -605,6 +612,7 @@ function Enter-HdcShell {
             try { Clear-HdcShellCompletionMenu }
             finally {
                 $script:HdcShellCompletionState = $null
+                $script:HdcShellCompletionDrawn = $false
                 $script:HdcShellHistoryCwd = $null
                 [Microsoft.PowerShell.PSConsoleReadLine]::ClearHistory()
                 # Rebuild the original host history without re-writing it to disk or
