@@ -744,6 +744,12 @@ function Enter-HdcShell {
                     $cwd = $newCwd
                 }
             }
+            # A newly created/removed/renamed file must be reflected by the
+            # next input line's path emphasis. Read-only commands keep the
+            # 10-second listing cache for performance.
+            if (Test-HdcShellMayChangeFiles $line) {
+                Clear-HdcShellDirectoryCache
+            }
         }
     } finally {
         if ($script:HdcShellSession) {

@@ -67,6 +67,82 @@ function Get-HdcCached {
     return $data
 }
 
+function Clear-HdcShellDirectoryCache {
+    # A command that may create/remove/rename files must not leave the
+    # completion/highlight listing cache stale for the next input line.
+    $prefix = if ($script:HdcShellSerial) { "ls:$($script:HdcShellSerial):" } else { 'ls:' }
+    foreach ($key in @($script:HdcCache.Keys)) {
+        if ($key.StartsWith($prefix, [StringComparison]::Ordinal)) {
+            $script:HdcCache.Remove($key)
+        }
+    }
+    $script:HdcShellHighlightListings = @{}
+}
+
+function Test-HdcShellMayChangeFiles {
+    param([AllowEmptyString()][string]$Line)
+    $text = $Line.Trim()
+    if (-not $text) { return $false }
+    # Pipelines, redirection and compound syntax may hide a mutation; be
+    # conservative and refresh the directory view.
+    if ($text -match '[|&;<>`]' -or $text -match '\$\(') { return $true }
+    $tokens = @($text -split '\s+')
+    $first = $tokens[0]
+    $second = if ($tokens.Count -gt 1) { $tokens[1] } else { '' }
+    switch -CaseSensitive ($first) {
+        'ls' { return $false }
+        'cat' { return $false }
+        'grep' { return $false }
+        'head' { return $false }
+        'tail' { return $false }
+        'wc' { return $false }
+        'sort' { return $false }
+        'pwd' { return $false }
+        'echo' { return $false }
+        'printf' { return $false }
+        'stat' { return $false }
+        'file' { return $false }
+        'readlink' { return $false }
+        'du' { return $false }
+        'df' { return $false }
+        'base64' { return $false }
+        'xxd' { return $false }
+        'od' { return $false }
+        'cmp' { return $false }
+        'diff' { return $false }
+        'md5sum' { return $false }
+        'sha256sum' { return $false }
+        'seq' { return $false }
+        'sleep' { return $false }
+        'clear' { return $false }
+        'cd' { return $false }
+        'exit' { return $false }
+        'logout' { return $false }
+        'test' { return $false }
+        'true' { return $false }
+        'false' { return $false }
+        ':' { return $false }
+        'which' { return $false }
+        'type' { return $false }
+        'env' { return $false }
+        'printenv' { return $false }
+        'id' { return $false }
+        'uname' { return $false }
+        'date' { return $false }
+        'uptime' { return $false }
+        'free' { return $false }
+        'hilog' { return $false }
+        'dmesg' { return $false }
+        'ps' { return $false }
+        'find' { return ($text -match '\s-(delete|exec|execdir|ok|okdir|fprint|fprintf|fls)\b') }
+        'sed' { return ($text -match '(^|\s)-[A-Za-z]*i') }
+        'bm' { return $second -notin @('dump', 'list', 'get', 'help') }
+        'aa' { return $second -notin @('dump', 'help') }
+        'param' { return $second -ne 'get' }
+        default { return $true }
+    }
+}
+
 function Get-HdcTarget {
     [CmdletBinding()]
     param()

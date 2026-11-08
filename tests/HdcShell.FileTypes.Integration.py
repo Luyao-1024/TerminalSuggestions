@@ -210,6 +210,13 @@ with tempfile.TemporaryDirectory(prefix='hdc-filetypes-') as folder:
         expect_color(f'{fixture}/sub', '00ffff', True)
         cancel_input()
 
+        # A file created by the previous command must be visible to path
+        # emphasis on the next input line, despite the 10-second cache.
+        run(f'touch {fixture}/fresh.txt')
+        type_line(f'cat {fixture}/fresh.txt')
+        expect_color(f'{fixture}/fresh.txt', '00ffff', True)
+        cancel_input()
+
         # ---- Long listing colors for every fixture type.
         run(f'ls -l {fixture}')
         for name, color in [('a.zip', 'brightred'), ('i.png', 'brightmagenta'),

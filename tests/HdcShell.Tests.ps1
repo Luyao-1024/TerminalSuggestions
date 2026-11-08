@@ -223,6 +223,38 @@ public static class HdcMenuCoordinateProbe {
     Assert-Equal (Get-HdcShellMarkerSuffix '*' 'all') '*' '-F shows executable markers'
     Assert-Equal (Get-HdcShellMarkerSuffix '/' 'none') '' 'Unrequested markers stay hidden'
 
+    # Filesystem-mutating commands refresh the directory view; read-only
+    # commands keep the 10-second listing cache.
+    foreach ($line in @('touch f', 'mkdir d', 'rm f', 'mv a b', 'ln -s a b',
+                        'echo hi > f', 'cat f | grep x', 'unknown-command')) {
+        Assert-True (Test-HdcShellMayChangeFiles $line) "May mutate: $line"
+    }
+    foreach ($line in @('ls -l', 'cat f', 'grep x f', 'head -1 f', 'pwd',
+                        'echo hi', 'bm dump -a', 'param get x', 'find . -name x',
+                        'sed -n 1p f', 'cd /data', 'sleep 1')) {
+        Assert-True (-not (Test-HdcShellMayChangeFiles $line)) "Read only: $line"
+    }
+    Assert-True (Test-HdcShellMayChangeFiles 'find . -delete') 'find -delete may mutate'
+    Assert-True (Test-HdcShellMayChangeFiles 'sed -i s/a/b/ f') 'sed -i may mutate'
+    $savedCache = $script:HdcCache
+    $savedListings = $script:HdcShellHighlightListings
+    $savedSerial = $script:HdcShellSerial
+    $script:HdcShellSerial = 'test-device'
+    $script:HdcCache = @{
+        'ls:test-device:False:/data' = @{ Time = Get-Date; Data = @('x') }
+        'ls:other:False:/data' = @{ Time = Get-Date; Data = @('y') }
+        'bins:test-device' = @{ Time = Get-Date; Data = @('ls') }
+    }
+    $script:HdcShellHighlightListings = @{ frame = $true }
+    Clear-HdcShellDirectoryCache
+    Assert-True (-not $script:HdcCache.ContainsKey('ls:test-device:False:/data')) 'Current device listing cache is cleared'
+    Assert-True $script:HdcCache.ContainsKey('ls:other:False:/data') 'Other device listing cache is kept'
+    Assert-True $script:HdcCache.ContainsKey('bins:test-device') 'Command cache is not a directory listing'
+    Assert-Equal $script:HdcShellHighlightListings.Count 0 'Frame cache is cleared with listings'
+    $script:HdcCache = $savedCache
+    $script:HdcShellHighlightListings = $savedListings
+    $script:HdcShellSerial = $savedSerial
+
     # Simple cat is transported as device-side base64; pipelines and
     # redirections must stay untouched on the device.
     Assert-True (Test-HdcShellSimpleCat 'cat /system/bin/init') 'Plain cat uses binary-safe transport'
