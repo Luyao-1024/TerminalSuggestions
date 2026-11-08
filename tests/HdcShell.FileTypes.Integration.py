@@ -195,6 +195,21 @@ with tempfile.TemporaryDirectory(prefix='hdc-filetypes-') as folder:
             expect_color(needle, color, underline)
             cancel_input()
 
+        # Only a complete device command is green; "l" is not "ls".
+        type_line('l')
+        check(cells('l')[0][0] != 'green', 'An incomplete command prefix is not green')
+        cancel_input()
+        type_line('ls')
+        check(cells('ls')[0][0] == 'green', 'An exact device command is green')
+        cancel_input()
+        # Only an exact path is emphasized; "su" is a prefix of "sub".
+        type_line(f'cd {fixture}/su')
+        expect_color(f'{fixture}/su', 'default', False)
+        cancel_input()
+        type_line(f'cd {fixture}/sub')
+        expect_color(f'{fixture}/sub', '00ffff', True)
+        cancel_input()
+
         # ---- Long listing colors for every fixture type.
         run(f'ls -l {fixture}')
         for name, color in [('a.zip', 'brightred'), ('i.png', 'brightmagenta'),

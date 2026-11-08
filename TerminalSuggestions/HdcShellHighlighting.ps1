@@ -61,12 +61,9 @@ function Get-HdcShellPathHighlight {
                 }
                 $script:HdcShellHighlightListings[$key] = $paths
             }
+            # Only a complete existing path is emphasized. A partial prefix
+            # such as "cd ab" for "abc" must not look like a valid path.
             $exists = $script:HdcShellHighlightListings[$key].Contains($probe)
-            if (-not $exists -and $token.Index + $token.Length -eq $Line.Length) {
-                foreach ($candidate in $script:HdcShellHighlightListings[$key]) {
-                    if ($candidate.StartsWith($probe, [StringComparison]::Ordinal)) { $exists = $true; break }
-                }
-            }
         }
         if ($exists) {
             # zsh overlays quoted-argument styles on top of path styles: a
@@ -92,13 +89,37 @@ function Get-HdcShellPathHighlight {
     }
 }
 
+function Get-HdcShellCommandHighlight {
+    param([AllowEmptyString()][string]$Line)
+    if (-not $script:HdcShellSerial -or -not $script:HdcShellCwd) { return }
+    $match = [regex]::Match($Line, '^\s*(?<cmd>[A-Za-z0-9_./+-]+)')
+    if (-not $match.Success) { return }
+    $word = $match.Groups['cmd'].Value
+    # A single character is not a complete command; do not trigger a device
+    # command scan just to color a prefix.
+    if ($word.Length -lt 2) { return }
+    if ($word -cin $script:HdcShellBuiltins) {
+        $match.Groups['cmd'].Index
+        $word.Length
+        return
+    }
+    if ($null -eq $script:HdcShellBins) {
+        $script:HdcShellBins = @(Get-HdcShellBinary $script:HdcShellSerial)
+    }
+    if ($word -cin $script:HdcShellBins) {
+        $match.Groups['cmd'].Index
+        $word.Length
+    }
+}
+
 function Initialize-HdcShellHighlighting {
     if (-not ('TerminalSuggestions.HdcShellPathConsole' -as [type])) {
         Add-Type -Path (Join-Path $PSScriptRoot 'HdcShellPathConsole.cs') -ErrorAction Stop
     }
     $script:HdcShellPathConsole = [TerminalSuggestions.HdcShellPathConsole]::Install(
         [Microsoft.PowerShell.PSConsoleReadLine],
-        [Func[string, int[]]]{ param($line); [int[]]@(Get-HdcShellPathHighlight $line) })
+        [Func[string, int[]]]{ param($line); [int[]]@(Get-HdcShellPathHighlight $line) },
+        [Func[string, int[]]]{ param($line); [int[]]@(Get-HdcShellCommandHighlight $line) })
 }
 
 function Reset-HdcShellHighlighting {

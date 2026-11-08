@@ -96,7 +96,7 @@ Import-Module (Join-Path $PSScriptRoot '../TerminalSuggestions/TerminalSuggestio
     Assert-Equal @(Get-HdcShellPathHighlight 'cat /data/file.txt /data/local') @(4, 14, 19, 11) 'Each existing path argument gets its own span'
     Assert-Equal @(Get-HdcShellPathHighlight 'cd "/data/a b"') @() 'Quoted path styles override underline like zsh'
     Assert-Equal @(Get-HdcShellPathHighlight 'cd /data/"a b"') @(3, 6) 'Mixed quotes retain emphasis on the unquoted path segment'
-    Assert-Equal @(Get-HdcShellPathHighlight 'cd /data/loc') @(3, 9) 'A valid path prefix at the end of input is emphasized like zsh'
+    Assert-Equal @(Get-HdcShellPathHighlight 'cd /data/loc') @() 'A path prefix is not emphasized; only complete paths are'
     Assert-Equal @(Get-HdcShellPathHighlight 'cd /data/loc ') @() 'A trailing space ends path-prefix emphasis'
     Assert-Equal @(Get-HdcShellPathHighlight 'cd /data/a\ b') @(3, 10) 'Escaped spaces are decoded for device lookup'
     Assert-Equal @(Get-HdcShellPathHighlight 'echo hi # /data/local') @() 'Comments do not trigger path highlighting'
@@ -105,6 +105,13 @@ Import-Module (Join-Path $PSScriptRoot '../TerminalSuggestions/TerminalSuggestio
     Assert-Equal (Resolve-HdcShellHighlightPath '~/a') '/root/a' 'Tilde expands from the device home'
     Assert-Equal (Resolve-HdcShellHighlightPath "'~/a'") '~/a' 'A quoted tilde stays literal'
     Assert-Equal (Resolve-HdcShellHighlightPath '\$HOME') '$HOME' 'An escaped dollar stays literal'
+    Assert-Equal @(Get-HdcShellCommandHighlight 'l') @() 'A one-character command prefix is not highlighted'
+    Assert-Equal @(Get-HdcShellCommandHighlight 'ls') @(0, 2) 'An exact device command is highlighted'
+    Assert-Equal @(Get-HdcShellCommandHighlight 'lsof') @(0, 4) 'A longer exact device command is highlighted'
+    Assert-Equal @(Get-HdcShellCommandHighlight 'lso') @() 'A command prefix is not highlighted'
+    Assert-Equal @(Get-HdcShellCommandHighlight 'cd /') @(0, 2) 'An exact shell builtin is highlighted'
+    Assert-Equal @(Get-HdcShellCommandHighlight 'LS') @() 'Command matching is case sensitive'
+    Assert-Equal @(Get-HdcShellCommandHighlight 'nope') @() 'An unknown command is not highlighted'
     Assert-Equal (Resolve-HdcShellHighlightPath '$(touch /tmp/must-not-execute)') $null 'Highlighting never evaluates command substitution'
     Assert-Equal (Resolve-HdcShellHighlightPath '$UNKNOWN/path') $null 'Unknown variables are not expanded on the host'
 
@@ -133,6 +140,8 @@ Import-Module (Join-Path $PSScriptRoot '../TerminalSuggestions/TerminalSuggestio
     Assert-True ($styled.EndsWith("`e[90m`e[24m prediction")) 'Gray prediction text never inherits path emphasis'
     $styled = [TerminalSuggestions.HdcShellPathConsole]::Emphasize("`e[38;2;0;128;255m/data next", '/data next', 0, 0, @(0, 5))
     Assert-True ($styled.Contains("`e[38;2;0;255;255m`e[4m/data`e[38;2;0;128;255m`e[24m next")) 'The following text recovers its original RGB color including zero components'
+    $styled = [TerminalSuggestions.HdcShellPathConsole]::Emphasize("`e[39mls`e[0m -l", 'ls -l', 0, 0, @(), @(0, 2))
+    Assert-True ($styled.Contains("`e[32mls")) 'An exact device command is painted green'
     Add-Type -TypeDefinition @'
 public static class HdcMenuCoordinateProbe {
     public static void ResizeDuringFrame() {

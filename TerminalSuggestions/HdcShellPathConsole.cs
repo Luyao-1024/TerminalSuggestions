@@ -15,12 +15,19 @@ namespace TerminalSuggestions
         private const BindingFlags Fields = BindingFlags.Instance | BindingFlags.NonPublic;
         private object target, editor;
         private FieldInfo bufferField, linesField, optionsField;
-        private Func<string, int[]> provider;
+        private Func<string, int[]> provider, commandProvider;
         private string lastInput;
         private int[] spans = Array.Empty<int>();
+        private int[] commandSpans = Array.Empty<int>();
         private static readonly Regex Sgr = new Regex("\x1b\\[[0-9;:]*m", RegexOptions.Compiled);
 
         public static HdcShellPathConsole Install(Type editorType, Func<string, int[]> provider)
+        {
+            return Install(editorType, provider, null);
+        }
+
+        public static HdcShellPathConsole Install(Type editorType, Func<string, int[]> provider,
+            Func<string, int[]> commandProvider)
         {
             object editor = editorType.GetField("_singleton", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
             FieldInfo console = editorType.GetField("_console", Fields);
@@ -38,11 +45,17 @@ namespace TerminalSuggestions
             proxy.linesField = lines;
             proxy.optionsField = options;
             proxy.provider = provider;
+            proxy.commandProvider = commandProvider;
             console.SetValue(editor, proxy);
             return proxy;
         }
 
-        public void Reset() { lastInput = null; spans = Array.Empty<int>(); }
+        public void Reset()
+        {
+            lastInput = null;
+            spans = Array.Empty<int>();
+            commandSpans = Array.Empty<int>();
+        }
 
         protected override object Invoke(MethodInfo method, object[] arguments)
         {
@@ -71,9 +84,12 @@ namespace TerminalSuggestions
                     if (lastInput != input)
                     {
                         spans = provider(input) ?? Array.Empty<int>();
+                        commandSpans = commandProvider != null
+                            ? commandProvider(input) ?? Array.Empty<int>()
+                            : Array.Empty<int>();
                         lastInput = input;
                     }
-                    if (spans.Length == 0) return text;
+                    if (spans.Length == 0 && commandSpans.Length == 0) return text;
                     int prefix = 0;
                     if (i != 0)
                     {
@@ -81,7 +97,7 @@ namespace TerminalSuggestions
                         string prompt = (string)options.GetType().GetProperty("ContinuationPrompt").GetValue(options);
                         prefix = Sgr.Replace(prompt, "").Length;
                     }
-                    return Emphasize(text, logical[i], offset, prefix, spans);
+                    return Emphasize(text, logical[i], offset, prefix, spans, commandSpans);
                 }
                 offset += logical[i].Length + 1;
             }
@@ -90,17 +106,24 @@ namespace TerminalSuggestions
 
         // Public for focused ANSI regression checks. Offsets are UTF-16 input
         // offsets; ANSI styles consume no cells, controls render as two chars.
-        public static string Emphasize(string rendered, string input, int offset, int prefix, int[] spans)
+        public static string Emphasize(string rendered, string input, int offset, int prefix, int[] spans,
+            int[] commandSpans = null)
         {
-            var wanted = new List<bool>();
-            for (int i = 0; i < prefix; i++) wanted.Add(false);
+            if (commandSpans == null) commandSpans = Array.Empty<int>();
+            // 0: default, 1: path, 2: exact device command
+            var wanted = new List<byte>();
+            for (int i = 0; i < prefix; i++) wanted.Add(0);
             for (int i = 0; i < input.Length; i++)
             {
-                bool path = false;
+                byte style = 0;
                 for (int j = 0; j + 1 < spans.Length; j += 2)
-                    if (offset + i >= spans[j] && offset + i < spans[j] + spans[j + 1]) { path = true; break; }
-                wanted.Add(path);
-                if (char.IsControl(input[i])) wanted.Add(path);
+                    if (offset + i >= spans[j] && offset + i < spans[j] + spans[j + 1]) { style = 1; break; }
+                if (style == 0)
+                    for (int j = 0; j + 1 < commandSpans.Length; j += 2)
+                        if (offset + i >= commandSpans[j] && offset + i < commandSpans[j] + commandSpans[j + 1])
+                        { style = 2; break; }
+                wanted.Add(style);
+                if (char.IsControl(input[i])) wanted.Add(style);
             }
             var result = new StringBuilder(rendered.Length + 32);
             int visible = 0;
@@ -118,9 +141,10 @@ namespace TerminalSuggestions
                     i += sgr.Length;
                     continue;
                 }
-                bool path = visible < wanted.Count && wanted[visible];
-                string foreground = path ? "\x1b[38;2;0;255;255m" : nativeForeground;
-                bool underline = path || nativeUnderline;
+                byte style = visible < wanted.Count ? wanted[visible] : (byte)0;
+                string foreground = style == 1 ? "\x1b[38;2;0;255;255m" :
+                    style == 2 ? "\x1b[32m" : nativeForeground;
+                bool underline = style == 1 || nativeUnderline;
                 if (foreground != actualForeground) result.Append(foreground);
                 if (underline != actualUnderline) result.Append(underline ? "\x1b[4m" : "\x1b[24m");
                 actualForeground = foreground;

@@ -18,7 +18,6 @@ cases = {
     'delete_and_restore': ['cd local', 'x', '\x7f'],
     'quoted': ['cd "space dir"'],
     'mixed_quotes': ['cd ./"space dir"'],
-    'prefix': ['cd loca', ' '],
     'escaped': ['cd space\\ dir'],
     'file': ['cat plain\\ file'],
     'multiple': ['ls local log missing'],
@@ -26,7 +25,7 @@ cases = {
     'relative': ['cd ./local'],
     'home': ['cd ~'],
     'home_quoted': ['cd "$HOME"'],
-    'completion': ['cd loca', '\t'],
+    'completion': ['cd local', '\t'],
     'history': ['ls local\r', '\x1b[A'],
     'cwd': ['cd local\r', 'cd ../log'],
 }

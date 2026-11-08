@@ -209,7 +209,7 @@ function Enable-HdcShellEditor {
             }
             'MemoryOnly'
         } -Colors @{
-            Default = "`e[39m"; Command = "`e[32m"; String = "`e[33m"
+            Default = "`e[39m"; Command = "`e[39m"; String = "`e[33m"
             Keyword = "`e[33m"; Parameter = "`e[39m"; Operator = "`e[39m"
             Number = "`e[39m"; Variable = "`e[36m"; Comment = "`e[90m"
             Error = "`e[1;31m"; InlinePrediction = "`e[90m"
