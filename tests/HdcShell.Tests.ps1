@@ -175,6 +175,25 @@ public static class HdcMenuCoordinateProbe {
     Assert-True ($remote.Contains("OLDPWD='/root'")) 'OLDPWD is still restored before the command'
     Assert-True ($remote.EndsWith("echo '@@M@@'`$?; pwd")) 'Status marker still follows the command'
 
+    # File-channel cat keeps partial data and reports a timeout.
+    if (-not $IsWindows) {
+        $fakeHdc = Join-Path ([IO.Path]::GetTempPath()) ('slow-hdc-' + [guid]::NewGuid().ToString('N'))
+        $received = $null
+        try {
+            [IO.File]::WriteAllText($fakeHdc,
+                "#!/bin/sh`nfor a; do last=`$a; done`nprintf 'PARTIAL' > `"`$last`"`nsleep 30`n")
+            & chmod +x $fakeHdc
+            $received = Receive-HdcFileToTemp -Application $fakeHdc -Serial test -RemotePath file -TimeoutSeconds 1
+            Assert-True ($null -ne $received -and $received.TimedOut) 'A slow file-channel read times out'
+            Assert-Equal ([IO.File]::ReadAllText($received.Path)) 'PARTIAL' 'Partial file content survives a timeout'
+        } finally {
+            if ($received -and $received.Path) {
+                Remove-Item -LiteralPath $received.Path -Force -ErrorAction SilentlyContinue
+            }
+            Remove-Item -LiteralPath $fakeHdc -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     # ls flag handling is case sensitive and keeps unsupported layouts raw.
     $plan = Get-HdcShellLsPlan 'ls -S /data'
     Assert-Equal $plan.Mode 'columns' 'Uppercase -S is a sort flag, not lowercase -s'

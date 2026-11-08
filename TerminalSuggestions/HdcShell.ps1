@@ -433,7 +433,7 @@ function Get-HdcShellFastCatPath {
 }
 
 function Receive-HdcFileToTemp {
-    param([string]$Application, [string]$Serial, [string]$RemotePath)
+    param([string]$Application, [string]$Serial, [string]$RemotePath, [int]$TimeoutSeconds = 10)
     $temp = [IO.Path]::Combine([IO.Path]::GetTempPath(), [IO.Path]::GetRandomFileName())
     $process = [Diagnostics.Process]::new()
     $process.StartInfo = [Diagnostics.ProcessStartInfo]::new()
@@ -446,18 +446,29 @@ function Receive-HdcFileToTemp {
         $process.StartInfo.ArgumentList.Add($argument)
     }
     $success = $false
+    $timedOut = $false
     try {
         [void]$process.Start()
         $process.StandardInput.Close()
         $stdout = $process.StandardOutput.ReadToEndAsync()
         $stderr = $process.StandardError.ReadToEndAsync()
-        if (-not $process.WaitForExit(5000)) { $process.Kill($true); return $null }
+        if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+            $timedOut = $true
+            try { $process.Kill($true); [void]$process.WaitForExit(2000) } catch { }
+        }
         $process.WaitForExit()
         $text = $stdout.GetAwaiter().GetResult() + $stderr.GetAwaiter().GetResult()
-        if ($text -match '\[Fail\]|Error') { return $null }
-        if (-not (Test-Path -LiteralPath $temp)) { return $null }
+        if (-not $timedOut -and $text -match '\[Fail\]|Error') { return $null }
+        if (-not (Test-Path -LiteralPath $temp)) {
+            if ($timedOut) { return [pscustomobject]@{ Path = $null; Size = 0; TimedOut = $true } }
+            return $null
+        }
         $success = $true
-        [pscustomobject]@{ Path = $temp; Size = (Get-Item -LiteralPath $temp).Length }
+        [pscustomobject]@{
+            Path = $temp
+            Size = (Get-Item -LiteralPath $temp).Length
+            TimedOut = $timedOut
+        }
     } catch { return $null }
     finally {
         try { if (-not $process.HasExited) { $process.Kill($true) } } catch { }
@@ -653,22 +664,39 @@ function Enter-HdcShell {
                         -Application $exe.Source -Serial $Serial
                 }
                 if ($fastPath) {
-                    $received = Receive-HdcFileToTemp -Application $exe.Source -Serial $Serial -RemotePath $fastPath
+                    $received = Receive-HdcFileToTemp -Application $exe.Source -Serial $Serial `
+                        -RemotePath $fastPath -TimeoutSeconds 10
                     if ($received) {
                         try {
-                            $bytes = [IO.File]::ReadAllBytes($received.Path)
+                            $bytes = [byte[]]@()
+                            if ($received.Path -and (Test-Path -LiteralPath $received.Path)) {
+                                $bytes = [IO.File]::ReadAllBytes($received.Path)
+                            }
                             [Console]::Write($PSStyle.Reset)
-                            if ([TerminalSuggestions.HdcShellProcess]::LooksLikeBinaryBytes($bytes)) {
-                                Write-HdcShellBase64Bytes $bytes
-                            } else {
-                                $stdoutStream = [Console]::OpenStandardOutput()
-                                $stdoutStream.Write($bytes, 0, $bytes.Length)
-                                $stdoutStream.Flush()
+                            if ($bytes.Length -gt 0) {
+                                if ([TerminalSuggestions.HdcShellProcess]::LooksLikeBinaryBytes($bytes)) {
+                                    Write-HdcShellBase64Bytes $bytes
+                                } else {
+                                    $stdoutStream = [Console]::OpenStandardOutput()
+                                    $stdoutStream.Write($bytes, 0, $bytes.Length)
+                                    $stdoutStream.Flush()
+                                }
                             }
                             $result = [TerminalSuggestions.HdcShellProcessResult]::new()
-                            $result.ExitCode = 0
+                            if ($received.TimedOut) {
+                                # Keep the partial bytes readable and make the
+                                # truncation explicit instead of falling back to
+                                # the slower shell channel.
+                                [Console]::WriteLine()
+                                [Console]::Write("`e[0m[hdc shell] 读取超时（10 秒），以上为已获取的内容，显示不完整。`e[0m`n")
+                                $result.ExitCode = 124
+                            } else {
+                                $result.ExitCode = 0
+                            }
                         } finally {
-                            Remove-Item -LiteralPath $received.Path -Force -ErrorAction SilentlyContinue
+                            if ($received.Path) {
+                                Remove-Item -LiteralPath $received.Path -Force -ErrorAction SilentlyContinue
+                            }
                         }
                     }
                 }
