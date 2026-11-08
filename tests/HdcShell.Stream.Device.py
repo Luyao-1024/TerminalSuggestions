@@ -57,7 +57,7 @@ with tempfile.TemporaryDirectory(prefix='hdc-stream-device-') as folder:
         check(False,message)
 
     def current(): return screen.display[screen.cursor.y].strip()
-    def prompt(): wait(lambda: current() == serial + ' / ->', 'The device prompt did not return')
+    def prompt(timeout=10): wait(lambda: current() == serial + ' / ->', 'The device prompt did not return', timeout)
     def row(value): return any(line.strip() == value for line in screen.display)
     def send(text, seconds=.2): child.send(text); pump(seconds)
     def logs(): return any(re.match(r'^\d\d-\d\d \d\d:\d\d:\d\d', line.strip()) for line in screen.display)
@@ -88,7 +88,10 @@ with tempfile.TemporaryDirectory(prefix='hdc-stream-device-') as folder:
               'The following command sees interrupted status 130')
 
         send('\x0c')
-        send("printf '__PIPE_PID:%s\\n' $$; hilog | cat\r")
+        # Report the command shell's process group, not $$: the persistent
+        # session runs each command in a subshell, so $$ is the outer shell.
+        send("read -r __p __c __s __pp __testpg __r < /proc/self/stat; "
+             "printf '__PIPE_PID:%s\\n' \"$__testpg\"; hilog | cat\r")
         wait(logs, 'A pipeline did not stream')
         # hilog can scroll the identity line off-screen before the first log
         # sample; read it from the full transcript instead of the viewport.
@@ -103,7 +106,8 @@ with tempfile.TemporaryDirectory(prefix='hdc-stream-device-') as folder:
         check(remote(f'kill -0 -{pid} 2>/dev/null; printf "%s" "$?"') != '0', 'The interrupted pipeline left its process group running')
 
         send('dmesg\r',.5)
-        prompt()
+        # dmesg rewrites a large ring buffer; direct hdc takes about 10 s.
+        prompt(30)
         check(True, 'The unchanged dmesg command streams and completes')
         send('sleep 20\r\x03',.1)
         prompt()

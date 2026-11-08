@@ -20,7 +20,7 @@
 
 - 模块声明最低要求为 PowerShell 7.2、PSReadLine 2.2；不支持 Windows PowerShell 5.1。涉及私有接口的版本兼容性必须实际检查，不能仅根据版本下限推定兼容。
 - hdc 功能要求 OpenHarmony SDK 的工具目录在 `PATH` 中，查找 `hdc` 或 `hdc_std`；Windows 对应可执行文件按平台规则发现。
-- 增强会话的 RPC 使用 `.NET ProcessStartInfo.ArgumentList` 传参，避免依赖 PowerShell 原生命令的旧版引号传递行为。`--raw` 保留原生终端透传。
+- 增强会话的 RPC 使用 `.NET ProcessStartInfo.ArgumentList` 传参，避免依赖 PowerShell 原生命令的旧版引号传递行为。Unix 持久会话以主机 PTY 作为 `hdc shell` 的交互 stdin，用户命令在独立子 shell 中执行；Windows、PTY 创建失败或命令超过长度上限时回退到逐命令 RPC。`--raw` 保留原生终端透传。
 - 使用跨平台 API 和 ANSI 样式；Windows 是兼容目标，不能将设计目标写成已通过实机验证的事实。现有实机验证环境为 Linux、PowerShell 7.6.9、PSReadLine 2.4.5；Windows 尚未实机验证。
 
 ## 普通 PowerShell 行为
@@ -118,9 +118,9 @@
 
 ### 执行状态与能力边界
 
-- 每条命令仍使用独立设备 shell RPC，本地追踪并传递当前目录、`OLDPWD` 和上一条退出码；`cd -`、下一行 `$?`、尾部注释以及无换行的 `printf` / `clear` 不能破坏状态解析。
+- 增强会话优先复用一条持久 `hdc shell` 通道（Unix 主机 PTY 快速路径）。每条命令仍在独立的子 shell 进程中执行（通过内联函数与 `eval` 隔离变量、别名、`cd` 等状态），每条命令独立报告 PID/进程组、退出码和当前目录；PTY 不可用（例如 Windows）或命令行过长时，回退到每条命令独立 RPC。`cd -`、下一行 `$?`、尾部注释以及无换行的 `printf` / `clear` 不能破坏状态解析。
 - `export`、普通变量、别名、函数、umask、shell 选项和作业状态不跨命令保留；历史也不即时跨增强会话同步。不能宣称这是完整的持久 zsh/sh。
-- 增强会话没有为每条命令提供完整 PTY 或交互 stdin；远端命令的 stdin 指向 `/dev/null`，`cat`、`sort`、`head`、`read` 等待输入的命令立即得到 EOF 并结束，不能挂起整个会话；需要交互输入或原生作业控制的程序（如 `vi`、`top`）使用 `--raw`。程序自身因非 TTY 而缓冲的输出不会被强制改写；持续日志本身不要求切换 `--raw`。
+- 增强会话没有为每条命令提供完整 PTY 或交互 stdin；持久通道只作为 hdc 的输入通道，用户命令的 stdin 仍指向 `/dev/null`，stdout/stderr 仍经管道中继，不能让用户命令因持久通道而看到 TTY 并按交互模式运行。`cat`、`sort`、`head`、`read` 等待输入的命令立即得到 EOF 并结束，不能挂起整个会话；需要交互输入或原生作业控制的程序（如 `vi`、`top`）使用 `--raw`。程序自身因非 TTY 而缓冲的输出不会被强制改写；持续日志本身不要求切换 `--raw`。
 - 未知命令即时红色、完整 sh 语法高亮/多行接受、完整 zsh 补全规则仍未全部对齐。已通过的有限用例不能作为完整能力一致的结论。
 
 ## 实现与修改约束

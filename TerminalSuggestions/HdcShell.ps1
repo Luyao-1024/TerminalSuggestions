@@ -428,7 +428,9 @@ function Enter-HdcShell {
     try {
         [Microsoft.PowerShell.PSConsoleReadLine]::ClearHistory()
         if (-not ('TerminalSuggestions.HdcShellProcess' -as [type])) {
-            Add-Type -Path (Join-Path $PSScriptRoot 'HdcShellProcess.cs') -ErrorAction Stop
+            Add-Type -Path @(
+                (Join-Path $PSScriptRoot 'HdcShellProcess.cs'),
+                (Join-Path $PSScriptRoot 'HdcShellSession.cs')) -ErrorAction Stop
         }
         Enable-HdcShellEditor
         $script:HdcShellOldCwd = ''
@@ -468,7 +470,22 @@ function Enter-HdcShell {
         }
         Set-Item Function:\global:TabExpansion2 -Value $completionOverride
         Set-Item Function:\global:prompt -Value { Get-HdcShellPrompt }
+        # Unix fast path: one long-lived hdc shell with a per-command subshell.
+        # Unsupported hosts return null and keep the per-command RPC path.
+        $script:HdcShellSession = $null
+        $script:HdcShellSessionRetry = $false
+        try {
+            $script:HdcShellSession = [TerminalSuggestions.HdcShellSession]::StartIfSupported(
+                $exe.Source, $Serial, $script:HdcShellMarker)
+        } catch { $script:HdcShellSession = $null }
         while ($true) {
+            if (-not $script:HdcShellSession -and $script:HdcShellSessionRetry) {
+                $script:HdcShellSessionRetry = $false
+                try {
+                    $script:HdcShellSession = [TerminalSuggestions.HdcShellSession]::StartIfSupported(
+                        $exe.Source, $Serial, $script:HdcShellMarker)
+                } catch { $script:HdcShellSession = $null }
+            }
             # History and gray suggestions follow the remote directory; the
             # files are keyed by path only, so all devices share them.
             if ($script:HdcShellHistoryCwd -ne $cwd) {
@@ -516,14 +533,31 @@ function Enter-HdcShell {
                 $markerMode = $plan.MarkerMode
             }
 
-            # Newlines keep trailing comments from swallowing the status marker.
-            # Restore OLDPWD and $? alongside cwd before executing a new command.
-            $remote = New-HdcShellRemoteScript -Command $execLine -Marker $script:HdcShellMarker `
-                -Cwd $cwd -OldCwd $script:HdcShellOldCwd -LastExitCode $script:HdcShellLastExitCode
             # Unknown commands stream by default. Only simple ls forms whose
             # output is locally reformatted retain the existing buffered view.
-            $result = [TerminalSuggestions.HdcShellProcess]::Run($exe.Source, $Serial, $remote,
-                $script:HdcShellMarker, $lsMode -ne 'none', [Microsoft.PowerShell.PSConsoleReadLine])
+            # The persistent session is used when it can carry this command;
+            # otherwise the per-command RPC path preserves state and limits.
+            $result = $null
+            if ($script:HdcShellSession -and $script:HdcShellSession.Alive -and
+                $script:HdcShellSession.CanRun($execLine, $cwd, $script:HdcShellOldCwd,
+                    $script:HdcShellLastExitCode)) {
+                $result = $script:HdcShellSession.Run($execLine, $cwd, $script:HdcShellOldCwd,
+                    $script:HdcShellLastExitCode, $script:HdcShellMarker, ($lsMode -ne 'none'),
+                    [Microsoft.PowerShell.PSConsoleReadLine])
+                if ($result.Faulted) {
+                    # The command may already have run; do not replay it via a
+                    # second RPC. Rebuild the session for the next prompt.
+                    try { $script:HdcShellSession.Dispose() } catch { }
+                    $script:HdcShellSession = $null
+                    $script:HdcShellSessionRetry = $true
+                }
+            }
+            if (-not $result) {
+                $remote = New-HdcShellRemoteScript -Command $execLine -Marker $script:HdcShellMarker `
+                    -Cwd $cwd -OldCwd $script:HdcShellOldCwd -LastExitCode $script:HdcShellLastExitCode
+                $result = [TerminalSuggestions.HdcShellProcess]::Run($exe.Source, $Serial, $remote,
+                    $script:HdcShellMarker, $lsMode -ne 'none', [Microsoft.PowerShell.PSConsoleReadLine])
+            }
             if ($lsMode -ne 'none' -and $result.Output) {
                 $text = $result.Output
                 if ($text.EndsWith("`n")) { $text = $text.Substring(0, $text.Length - 1) }
@@ -541,6 +575,10 @@ function Enter-HdcShell {
             }
         }
     } finally {
+        if ($script:HdcShellSession) {
+            try { $script:HdcShellSession.Dispose() } catch { }
+            finally { $script:HdcShellSession = $null }
+        }
         try { Save-HdcShellHistory $script:HdcShellHistoryCwd }
         finally {
             try { Clear-HdcShellCompletionMenu }

@@ -59,6 +59,8 @@ Enter-HdcShell -Serial <serial>    # 直接调用入口
 3DK0224A12000841 hmdfs ->
 ```
 
+在 Unix 主机上，增强会话复用一条持久 `hdc shell` 通道，每条命令在独立子 shell 中执行，交互延迟接近原生 hdc；Windows 或 PTY 不可用时自动回退到逐命令 RPC。
+
 直接执行 `hilog`、`dmesg` 等设备命令即可。Ctrl+C 中断当前命令并留在设备会话；`exit` 或空行 Ctrl+D 退出。设备会话不转发交互输入，只输入 `cat` 等读取 stdin 的命令会立即结束，不会挂起。
 
 需要运行 `vi`、`top` 等交互程序时，使用原始透传模式：

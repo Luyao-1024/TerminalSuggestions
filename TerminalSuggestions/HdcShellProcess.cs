@@ -16,6 +16,7 @@ namespace TerminalSuggestions
         public int ExitCode;
         public string Directory;
         public bool Interrupted;
+        public bool Faulted;
         public string Output;
     }
 
@@ -31,6 +32,9 @@ namespace TerminalSuggestions
         public int Group { get; private set; }
         public int? ExitCode { get; private set; }
         public string Directory { get; private set; }
+        // True once the final cwd record arrives. A persistent session uses
+        // this as the end-of-command boundary.
+        public bool Complete { get; private set; }
 
         public HdcShellOutputStream(string marker, Action<string> write)
         {
@@ -57,7 +61,16 @@ namespace TerminalSuggestions
                     pending = pending.Substring(end + 1);
                     if (record == 2)
                     {
-                        if (value.StartsWith("/")) Directory = value;
+                        if (value.StartsWith("/"))
+                        {
+                            Directory = value;
+                            Complete = true;
+                            // The cwd record is the last protocol item. In the
+                            // persistent session the outer shell's prompt
+                            // follows it; never display that prompt.
+                            pending = "";
+                            return;
+                        }
                         record = 0;
                     }
                     else if (value.StartsWith("PID:"))
@@ -124,26 +137,40 @@ namespace TerminalSuggestions
             catch (OperationCanceledException) when (token.IsCancellationRequested) { }
         }
 
-        private static void Signal(string application, string serial, HdcShellOutputStream stream, string signal)
+        internal static void Signal(string application, string serial, HdcShellOutputStream stream, string signal)
         {
             // Signal only the verified group of this RPC, never a command name
             // or all hilog processes. Older daemons without a private group
             // receive a signal to this shell PID only.
             if (stream.Pid <= 1) return;
             string target = stream.Pid == stream.Group ? "-" + stream.Group : stream.Pid.ToString();
-            using var control = CreateProcess(application, new[] { "-t", serial, "shell", "kill -" + signal + " " + target + " 2>/dev/null" });
-            control.Start();
-            control.StandardInput.Close();
-            var output = control.StandardOutput.ReadToEndAsync();
-            var errors = control.StandardError.ReadToEndAsync();
-            if (!control.WaitForExit(1500)) control.Kill(true);
-            control.WaitForExit();
-            Task.WaitAll(output, errors);
+            var control = CreateProcess(application, new[] { "-t", serial, "shell", "kill -" + signal + " " + target + " 2>/dev/null" });
+            try
+            {
+                control.Start();
+                control.StandardInput.Close();
+            }
+            catch { control.Dispose(); return; }
+            // Do not block the reader loop on the control hdc client: on a
+            // loaded device its exit can take longer than the interrupt
+            // itself. The delivery is asynchronous; output is not needed.
+            Task.Run(() => {
+                try
+                {
+                    var output = control.StandardOutput.ReadToEndAsync();
+                    var errors = control.StandardError.ReadToEndAsync();
+                    if (!control.WaitForExit(1500)) control.Kill(true);
+                    control.WaitForExit();
+                    Task.WaitAll(output, errors);
+                }
+                catch { }
+                finally { control.Dispose(); }
+            });
         }
 
         // PSReadLine can have read ahead past Enter, including Ctrl+C. Preserve
         // every other key for its next input line instead of losing typeahead.
-        private sealed class Input : IDisposable
+        internal sealed class Input : IDisposable
         {
             private readonly object queue;
             private readonly MethodInfo clear, enqueue, asKey, fromKey;
@@ -202,7 +229,10 @@ namespace TerminalSuggestions
         public static HdcShellProcessResult Run(string application, string serial, string command, string marker, bool capture, Type editorType)
         {
             var captured = capture ? new StringBuilder() : null;
-            Action<string> write = capture ? text => captured.Append(text) : text => Console.Write(text);
+            bool suppress = false;
+            Action<string> write = capture
+                ? text => { if (!suppress) captured.Append(text); }
+                : text => { if (!suppress) Console.Write(text); };
             var stream = new HdcShellOutputStream(marker, write);
             using var input = new Input(editorType);
             using var process = CreateProcess(application, new[] { "-t", serial, "shell", command });
@@ -220,7 +250,14 @@ namespace TerminalSuggestions
                 Task stderr = Task.Run(() => Read(process.StandardError, true, chunks, cancelReads.Token));
                 while (true)
                 {
-                    if (input.Poll()) { interrupted = true; if (!stop.IsRunning) stop.Start(); }
+                    if (input.Poll())
+                    {
+                        interrupted = true;
+                        // Ctrl+C stops the display; keep decoding markers so the
+                        // prompt can return without waiting for the backlog.
+                        suppress = true;
+                        if (!stop.IsRunning) stop.Start();
+                    }
                     // Small poll interval keeps the post-output tail short:
                     // the loop still notices process exit promptly, and an
                     // idle wait never adds a visible 15 ms to every command.
